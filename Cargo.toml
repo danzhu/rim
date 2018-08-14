@@ -1,0 +1,7 @@
+[package]
+name = "rim"
+version = "0.1.0"
+authors = ["Daniel Zhu <danzhu24@hotmail.com>"]
+
+[dependencies]
+libc = "0.2"

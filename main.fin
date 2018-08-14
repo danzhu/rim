@@ -1,0 +1,76 @@
+def MotionKind
+    Inclusive
+    Exclusive
+
+def Motion
+    kind MotionKind
+    Line
+        line Int
+
+def cancel event
+    throw rim:Err:Cancel
+
+def range
+    rim:cursor -> start
+    motion_mode -> end
+    return Range
+        start: start
+        end: end
+
+def normal_mode
+    rim:keymap normal_map
+
+let normal_map = rim:map
+    "c" normal_change
+    "d" normal_delete
+    "y" normal_yank
+
+def normal_change event
+    range -> ran
+    rim:copy ran
+    rim:delete ran
+    insert_mode
+
+def normal_delete event
+    range -> ran
+    rim:copy ran
+    rim:delete ran
+
+def normal_yank event
+    range -> ran
+    rim:copy ran
+
+def motion_mode
+    rim:keymap motion_map
+
+let motion_map = rim:map
+    "j" motion_line_next
+    "k" motion_line_prev
+    "<escape>" cancel
+
+def motion_line_next event
+    rim:cursor -> cur
+    return Motion:Line
+        kind: Inclusive
+        line: cur.line + 1
+
+def motion_line_prev event
+    rim:cursor -> cur
+    return Motion:Line
+        kind: Inclusive
+        line: cur.line - 1
+
+def insert_mode
+    rim:keymap insert_map
+    insert_mode
+
+let insert_map = rim:map
+    "<printable>" insert_key
+    "<escape>" cancel
+
+def insert_key event
+    rim:insert event.key
+
+def main
+    rim:try normal_mode
+    main
