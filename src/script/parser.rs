@@ -277,23 +277,28 @@ where
     }
 
     fn block(&mut self) -> Result<Expr> {
-        let mut expr = self.expr()?;
+        let expr = self.expr()?;
 
-        if self.consume(&TokenKind::Arrow)? {
+        let name = if self.consume(&TokenKind::Arrow)? {
             let name = self.id()?;
             self.expect(&TokenKind::Newline)?;
+            name
+        } else if self.consume(&TokenKind::Newline)? {
+            "_".to_string()
+        } else {
+            return Ok(expr);
+        };
 
-            let next = self.block()?;
+        let next = self.block()?;
 
-            let func = Expr {
-                kind: ExprKind::Func(name, Box::new(next)),
-            };
-            expr = Expr {
-                kind: ExprKind::Seq(Box::new(expr), Box::new(func)),
-            };
-        }
+        let func = Expr {
+            kind: ExprKind::Func(name, Box::new(next)),
+        };
+        let ret = Expr {
+            kind: ExprKind::Seq(Box::new(expr), Box::new(func)),
+        };
 
-        Ok(expr)
+        Ok(ret)
     }
 
     fn expr(&mut self) -> Result<Expr> {

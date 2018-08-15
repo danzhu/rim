@@ -42,17 +42,6 @@ pub enum Task {
 
 impl rt::Value for Task {}
 
-pub struct Cont {
-    pub task: Task,
-    pub kind: ContKind,
-}
-
-pub enum ContKind {
-    Cont(rt::Ref),
-    End,
-}
-
-#[derive(Default)]
 pub struct Script {
     rt: rt::Runtime,
     env: rt::Scope,
@@ -60,34 +49,28 @@ pub struct Script {
 
 impl Script {
     pub fn new() -> Self {
-        Default::default()
+        let mut rt = rt::Runtime::new();
+        let mut env = rt::Scope::new();
+        let mut host = rt::Scope::new();
+
+        rt.insert("version", Task::Version, &mut host);
+        rt.insert(
+            "print",
+            rt::Native::new(|rt, v| Ok(rt.alloc(Task::Print(v)))),
+            &mut host,
+        );
+
+        rt.insert("rim", host, &mut env);
+
+        Script { rt, env }
     }
 
-    pub fn step(&mut self, func: rt::Ref, arg: rt::Ref) -> Result<Cont> {
-        let ret = self.rt.call(func, arg)?;
-        let (task, kind) = if let Some(rt::Seq { task, next }) = self.rt.get::<rt::Seq>(ret) {
-            (*task, ContKind::Cont(*next))
-        } else {
-            (ret, ContKind::End)
-        };
-
-        let task = self
-            .rt
-            .get::<Task>(task)
-            .ok_or_else(|| Error::NotTask(task))?
-            .clone();
-        Ok(Cont { task, kind })
+    pub fn runtime(&self) -> &rt::Runtime {
+        &self.rt
     }
 
     pub fn load(&mut self, content: &str) -> Result<()> {
         let decls = parser::parse(&content)?;
-
-        self.rt.insert("version", Task::Version, &mut self.env);
-        self.rt.insert(
-            "print",
-            rt::Native::new(|rt, v| Ok(rt.alloc(Task::Print(v)))),
-            &mut self.env,
-        );
 
         self.rt.load(decls, &mut self.env)?;
         Ok(())
@@ -107,24 +90,39 @@ impl Script {
     pub fn run(&mut self) -> Result<()> {
         let mut func = self.env.get("main").ok_or(Error::MissingMain)?;
         let mut arg = self.rt.alloc(());
+        let mut cont = Vec::new();
 
         loop {
-            let cont = self.step(func, arg)?;
+            let mut val = self.rt.call(func, arg)?;
+            while let Some(seq) = self.rt.get::<rt::Seq>(val) {
+                cont.push(seq.next);
+                val = seq.task;
+            }
 
-            match cont.task {
+            let task = self
+                .rt
+                .get::<Task>(val)
+                .ok_or_else(|| Error::NotTask(val))?
+                .clone();
+
+            match task {
                 Task::Version => arg = self.rt.alloc("0.1".to_string()),
                 Task::Print(val) => println!("{:?}", self.rt.get_any(val)),
             }
 
-            match cont.kind {
-                ContKind::Cont(cont) => {
-                    func = cont;
-                }
-                ContKind::End => break,
+            match cont.pop() {
+                Some(next) => func = next,
+                None => break,
             }
         }
 
         self.rt.dump();
         Ok(())
+    }
+}
+
+impl Default for Script {
+    fn default() -> Self {
+        Script::new()
     }
 }

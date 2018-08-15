@@ -26,6 +26,8 @@ impl Value for String {}
 #[derive(Clone, Debug)]
 pub enum Error {
     NonCallable(Ref),
+    NonScope(Ref),
+    NoMember(Scope, String),
 }
 
 pub type Result<T> = result::Result<T, Error>;
@@ -49,6 +51,8 @@ impl Scope {
         self.binds.get(name).cloned()
     }
 }
+
+impl Value for Scope {}
 
 #[derive(Debug)]
 struct Cell {
@@ -208,8 +212,18 @@ impl Runtime {
     pub fn eval(&mut self, expr: &ast::Expr, env: &Scope) -> Result<Ref> {
         match &expr.kind {
             ast::ExprKind::Bind(bind) => {
+                let mut parent = env;
+                for name in bind.names.iter().take(bind.names.len() - 1) {
+                    let r = parent
+                        .get(name)
+                        .ok_or(Error::NoMember(parent.clone(), name.clone()))?;
+                    parent = self.get::<Scope>(r).ok_or_else(|| Error::NonScope(r))?;
+                }
                 let name = bind.names.last().expect("empty bind");
-                Ok(env.binds[name])
+                let r = parent
+                    .get(name)
+                    .ok_or(Error::NoMember(parent.clone(), name.clone()))?;
+                Ok(r)
             }
             ast::ExprKind::Apply(func, arg) => {
                 let func = self.eval(&func, env)?;
