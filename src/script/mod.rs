@@ -3,12 +3,15 @@ mod parser;
 mod rt;
 
 use std::io::prelude::*;
-use std::{any, fs, io, result};
+use std::{fs, io, path, result};
 
 #[derive(Debug)]
 pub enum Error {
     Io(io::Error),
     Parse(parser::Error),
+    Runtime(rt::Error),
+    MissingMain,
+    NotTask(rt::Ref),
 }
 
 impl From<io::Error> for Error {
@@ -23,6 +26,12 @@ impl From<parser::Error> for Error {
     }
 }
 
+impl From<rt::Error> for Error {
+    fn from(err: rt::Error) -> Self {
+        Error::Runtime(err)
+    }
+}
+
 pub type Result<T> = result::Result<T, Error>;
 
 #[derive(Clone, Debug)]
@@ -31,11 +40,7 @@ pub enum Task {
     Print(rt::Ref),
 }
 
-impl rt::Value for Task {
-    fn as_any(&self) -> &any::Any {
-        self
-    }
-}
+impl rt::Value for Task {}
 
 pub struct Cont {
     pub task: Task,
@@ -58,16 +63,20 @@ impl Script {
         Default::default()
     }
 
-    pub fn step(&mut self, func: rt::Ref, arg: rt::Ref) -> Cont {
-        let ret = self.rt.call(func, arg, &self.env);
+    pub fn step(&mut self, func: rt::Ref, arg: rt::Ref) -> Result<Cont> {
+        let ret = self.rt.call(func, arg)?;
         let (task, kind) = if let Some(rt::Seq { task, next }) = self.rt.get::<rt::Seq>(ret) {
             (*task, ContKind::Cont(*next))
         } else {
             (ret, ContKind::End)
         };
 
-        let task = self.rt.get::<Task>(task).expect("not task").clone();
-        Cont { task, kind }
+        let task = self
+            .rt
+            .get::<Task>(task)
+            .ok_or_else(|| Error::NotTask(task))?
+            .clone();
+        Ok(Cont { task, kind })
     }
 
     pub fn load(&mut self, content: &str) -> Result<()> {
@@ -76,15 +85,18 @@ impl Script {
         self.rt.insert("version", Task::Version, &mut self.env);
         self.rt.insert(
             "print",
-            rt::Native::new(|rt, v| rt.alloc(Task::Print(v))),
+            rt::Native::new(|rt, v| Ok(rt.alloc(Task::Print(v)))),
             &mut self.env,
         );
 
-        self.rt.load(decls, &mut self.env);
+        self.rt.load(decls, &mut self.env)?;
         Ok(())
     }
 
-    pub fn load_file(&mut self, path: &str) -> Result<()> {
+    pub fn load_file<P>(&mut self, path: P) -> Result<()>
+    where
+        P: AsRef<path::Path>,
+    {
         let mut file = fs::File::open(path)?;
         let mut content = String::new();
         file.read_to_string(&mut content)?;
@@ -92,12 +104,12 @@ impl Script {
         self.load(&content)
     }
 
-    pub fn run(&mut self) {
-        let mut func = self.env.get("main").expect("no main function");
+    pub fn run(&mut self) -> Result<()> {
+        let mut func = self.env.get("main").ok_or(Error::MissingMain)?;
         let mut arg = self.rt.alloc(());
 
         loop {
-            let cont = self.step(func, arg);
+            let cont = self.step(func, arg)?;
 
             match cont.task {
                 Task::Version => arg = self.rt.alloc("0.1".to_string()),
@@ -113,5 +125,6 @@ impl Script {
         }
 
         self.rt.dump();
+        Ok(())
     }
 }

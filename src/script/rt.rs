@@ -1,29 +1,34 @@
 use super::ast;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::{any, fmt};
+use std::{any, fmt, result};
 
-pub trait Value: any::Any + fmt::Debug {
-    fn as_any(&self) -> &any::Any;
+pub trait AsAny: 'static {
+    fn as_any_imp(&self) -> &any::Any;
 }
 
-impl Value for () {
-    fn as_any(&self) -> &any::Any {
+impl<T: any::Any> AsAny for T {
+    fn as_any_imp(&self) -> &any::Any {
         self
     }
 }
 
-impl Value for String {
+pub trait Value: AsAny + fmt::Debug {
     fn as_any(&self) -> &any::Any {
-        self
+        self.as_any_imp()
     }
 }
 
-// impl<T: any::Any + fmt::Debug> Value for T {
-//     fn as_any(&self) -> &any::Any {
-//         self
-//     }
-// }
+impl Value for () {}
+
+impl Value for String {}
+
+#[derive(Clone, Debug)]
+pub enum Error {
+    NonCallable(Ref),
+}
+
+pub type Result<T> = result::Result<T, Error>;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Ref {
@@ -56,23 +61,13 @@ pub struct Seq {
     pub next: Ref,
 }
 
-impl Value for Seq {
-    fn as_any(&self) -> &any::Any {
-        self
-    }
-}
+impl Value for Seq {}
 
 #[derive(Clone, Debug)]
 pub struct Func {
     param: String,
     body: ast::Expr,
     env: Scope,
-}
-
-impl Func {
-    pub fn new(param: String, body: ast::Expr, env: Scope) -> Self {
-        Func { param, body, env }
-    }
 }
 
 impl Value for Func {
@@ -83,13 +78,13 @@ impl Value for Func {
 
 #[derive(Clone)]
 pub struct Native {
-    func: Rc<Fn(&mut Runtime, Ref) -> Ref>,
+    func: Rc<Fn(&mut Runtime, Ref) -> Result<Ref>>,
 }
 
 impl Native {
     pub fn new<F>(f: F) -> Self
     where
-        F: Fn(&mut Runtime, Ref) -> Ref + 'static,
+        F: Fn(&mut Runtime, Ref) -> Result<Ref> + 'static,
     {
         Native { func: Rc::new(f) }
     }
@@ -189,14 +184,15 @@ impl Runtime {
         env.binds.insert(name.into(), self.alloc(val));
     }
 
-    pub fn load(&mut self, decls: Vec<ast::Decl>, env: &mut Scope) {
+    pub fn load(&mut self, decls: Vec<ast::Decl>, env: &mut Scope) -> Result<()> {
         for decl in decls {
-            let r = self.eval(&decl.value, env);
+            let r = self.eval(&decl.value, env)?;
             env.binds.insert(decl.name, r);
         }
+        Ok(())
     }
 
-    pub fn call(&mut self, func: Ref, arg: Ref, env: &Scope) -> Ref {
+    pub fn call(&mut self, func: Ref, arg: Ref) -> Result<Ref> {
         if let Some(native) = self.get::<Native>(func).cloned() {
             (native.func)(self, arg)
         } else if let Some(func) = self.get::<Func>(func).cloned() {
@@ -205,33 +201,30 @@ impl Runtime {
 
             self.eval(&func.body, &env)
         } else {
-            panic!(format!(
-                "expect function type, got {:?}",
-                self.get_any(func)
-            ));
+            Err(Error::NonCallable(func))
         }
     }
 
-    pub fn eval(&mut self, expr: &ast::Expr, env: &Scope) -> Ref {
+    pub fn eval(&mut self, expr: &ast::Expr, env: &Scope) -> Result<Ref> {
         match &expr.kind {
             ast::ExprKind::Bind(bind) => {
                 let name = bind.names.last().expect("empty bind");
-                env.binds[name]
+                Ok(env.binds[name])
             }
             ast::ExprKind::Apply(func, arg) => {
-                let func = self.eval(&func, env);
-                let arg = self.eval(&arg, env);
-                self.call(func, arg, env)
+                let func = self.eval(&func, env)?;
+                let arg = self.eval(&arg, env)?;
+                self.call(func, arg)
             }
-            ast::ExprKind::Func(name, body) => self.alloc(Func {
+            ast::ExprKind::Func(name, body) => Ok(self.alloc(Func {
                 param: name.clone(),
                 body: *body.clone(),
                 env: env.clone(),
-            }),
+            })),
             ast::ExprKind::Seq(expr, next) => {
-                let task = self.eval(&expr, env);
-                let next = self.eval(&next, env);
-                self.alloc(Seq { task, next })
+                let task = self.eval(&expr, env)?;
+                let next = self.eval(&next, env)?;
+                Ok(self.alloc(Seq { task, next }))
             }
         }
     }

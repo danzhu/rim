@@ -16,7 +16,7 @@ mod script;
 
 fn main() {
     let mut script = script::Script::new();
-    script.load_file("test.fin").expect("startup file");
-    script.run();
+    script.load_file("test.fin").expect("failed to load");
+    script.run().expect("failed to run");
     // run().expect("ncurses error");
 }
