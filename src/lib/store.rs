@@ -43,6 +43,10 @@ impl<T> Store<T> {
         self.values[index].as_ref().value()
     }
 
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
+        self.values[index].as_mut().value()
+    }
+
     pub fn add(&mut self, value: T) -> usize {
         self.len += 1;
         match self.free {
@@ -88,19 +92,13 @@ impl<T> ops::Index<usize> for Store<T> {
     type Output = T;
 
     fn index(&self, index: usize) -> &T {
-        match &self.values[index] {
-            Cell::Value(value) => value,
-            Cell::Free(_) => panic!("freed cell"),
-        }
+        self.get(index).expect("freed cell")
     }
 }
 
 impl<T> ops::IndexMut<usize> for Store<T> {
     fn index_mut(&mut self, index: usize) -> &mut T {
-        match &mut self.values[index] {
-            Cell::Value(value) => value,
-            Cell::Free(_) => panic!("freed cell"),
-        }
+        self.get_mut(index).expect("freed cell")
     }
 }
 

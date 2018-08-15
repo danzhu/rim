@@ -2,7 +2,6 @@ mod ast;
 mod parser;
 mod rt;
 
-use self::rt::Value;
 use std::io::prelude::*;
 use std::{fs, io, path, result};
 
@@ -52,13 +51,13 @@ impl rt::Value for Task {
 
 pub struct Script {
     mem: rt::Memory,
-    env: rt::Scope,
+    env: rt::Ref,
 }
 
 impl Script {
     pub fn new() -> Self {
         let mut mem = rt::Memory::new();
-        let mut env = rt::Scope::new();
+        let mut scope = rt::Scope::new();
         let mut host = rt::Scope::new();
 
         mem.debug(true);
@@ -70,7 +69,9 @@ impl Script {
             &mut host,
         );
 
-        mem.insert("rim", host, &mut env);
+        mem.insert("rim", host, &mut scope);
+
+        let env = mem.alloc(scope);
 
         Script { mem, env }
     }
@@ -82,7 +83,7 @@ impl Script {
     pub fn load(&mut self, content: &str) -> Result<()> {
         let decls = parser::parse(&content)?;
 
-        self.mem.load(decls, &mut self.env)?;
+        self.mem.load(decls, self.env)?;
         Ok(())
     }
 
@@ -98,7 +99,7 @@ impl Script {
     }
 
     pub fn run(&mut self) -> Result<()> {
-        let mut func = self.env.get("main").ok_or(Error::MissingMain)?;
+        let mut func = self.scope().get("main").ok_or(Error::MissingMain)?;
         let mut arg = self.mem.alloc(());
         let mut conts = Vec::new();
 
@@ -125,7 +126,7 @@ impl Script {
 
             let result = {
                 let mut gc = rt::Gc::new(&self.mem);
-                self.env.mark_rec(&mut gc);
+                gc.mark(self.env);
                 gc.mark(func);
                 gc.mark(arg);
                 for &cont in &conts {
@@ -144,6 +145,10 @@ impl Script {
         self.mem.dump();
 
         Ok(())
+    }
+
+    fn scope(&self) -> &rt::Scope {
+        self.mem.get::<rt::Scope>(self.env).expect("env not scope")
     }
 }
 

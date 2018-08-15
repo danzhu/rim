@@ -2,14 +2,20 @@ use super::ast;
 use lib::Store;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::{any, fmt, result};
+use std::{any, fmt, mem, result};
 
 pub trait AsAny: 'static {
     fn as_any_imp(&self) -> &any::Any;
+
+    fn as_any_mut_imp(&mut self) -> &mut any::Any;
 }
 
 impl<T: any::Any> AsAny for T {
     fn as_any_imp(&self) -> &any::Any {
+        self
+    }
+
+    fn as_any_mut_imp(&mut self) -> &mut any::Any {
         self
     }
 }
@@ -17,6 +23,10 @@ impl<T: any::Any> AsAny for T {
 pub trait Value: AsAny + fmt::Debug {
     fn as_any(&self) -> &any::Any {
         self.as_any_imp()
+    }
+
+    fn as_any_mut(&mut self) -> &mut any::Any {
+        self.as_any_mut_imp()
     }
 
     fn mark_rec(&self, _gc: &mut Gc) {}
@@ -94,7 +104,7 @@ impl Value for Seq {
 pub struct Func {
     param: String,
     body: ast::Expr,
-    env: Scope,
+    env: Ref,
 }
 
 impl fmt::Debug for Func {
@@ -105,7 +115,7 @@ impl fmt::Debug for Func {
 
 impl Value for Func {
     fn mark_rec(&self, gc: &mut Gc) {
-        self.env.mark_rec(gc);
+        gc.mark(self.env);
     }
 }
 
@@ -185,6 +195,20 @@ impl Memory {
         self.get_any(r).as_any().downcast_ref::<T>()
     }
 
+    pub fn get_any_mut(&mut self, r: Ref) -> &mut Value {
+        &mut **self
+            .store
+            .get_mut(r.index)
+            .expect("attemp to access freed object")
+    }
+
+    pub fn get_mut<T>(&mut self, r: Ref) -> Option<&mut T>
+    where
+        T: Value,
+    {
+        self.get_any_mut(r).as_any_mut().downcast_mut::<T>()
+    }
+
     pub fn insert<Str, T>(&mut self, name: Str, val: T, env: &mut Scope)
     where
         Str: Into<String>,
@@ -193,10 +217,12 @@ impl Memory {
         env.binds.insert(name.into(), self.alloc(val));
     }
 
-    pub fn load(&mut self, decls: Vec<ast::Decl>, env: &mut Scope) -> Result<()> {
+    pub fn load(&mut self, decls: Vec<ast::Decl>, env: Ref) -> Result<()> {
         for decl in decls {
             let r = self.eval(&decl.value, env)?;
-            env.binds.insert(decl.name, r);
+
+            let mut scope = self.get_mut::<Scope>(env).expect("load env not scope");
+            scope.binds.insert(decl.name, r);
         }
         Ok(())
     }
@@ -205,29 +231,29 @@ impl Memory {
         if let Some(native) = self.get::<Native>(func).cloned() {
             (native.func)(self, arg)
         } else if let Some(func) = self.get::<Func>(func).cloned() {
-            let mut env = func.env;
-            env.binds.insert(func.param, arg);
+            let mut scope = self
+                .get::<Scope>(func.env)
+                .expect("function env not scope")
+                .clone();
+            scope.binds.insert(func.param, arg);
+            let env = self.alloc(scope);
 
-            self.eval(&func.body, &env)
+            self.eval(&func.body, env)
         } else {
             Err(Error::NonCallable(func))
         }
     }
 
-    pub fn eval(&mut self, expr: &ast::Expr, env: &Scope) -> Result<Ref> {
+    pub fn eval(&mut self, expr: &ast::Expr, env: Ref) -> Result<Ref> {
         match &expr.kind {
             ast::ExprKind::Bind(bind) => {
-                let mut parent = env;
-                for name in bind.names.iter().take(bind.names.len() - 1) {
-                    let r = parent
-                        .get(name)
-                        .ok_or_else(|| Error::NoMember(parent.clone(), name.clone()))?;
-                    parent = self.get::<Scope>(r).ok_or_else(|| Error::NonScope(r))?;
+                let mut r = env;
+                for name in &bind.names {
+                    let scope = self.get::<Scope>(r).ok_or_else(|| Error::NonScope(r))?;
+                    r = scope
+                        .get(&name)
+                        .ok_or_else(|| Error::NoMember(scope.clone(), name.clone()))?;
                 }
-                let name = bind.names.last().expect("empty bind");
-                let r = parent
-                    .get(name)
-                    .ok_or_else(|| Error::NoMember(parent.clone(), name.clone()))?;
                 Ok(r)
             }
             ast::ExprKind::Apply(func, arg) => {
@@ -237,8 +263,8 @@ impl Memory {
             }
             ast::ExprKind::Func(name, body) => Ok(self.alloc(Func {
                 param: name.clone(),
-                body: *body.clone(),
-                env: env.clone(),
+                body: (**body).clone(),
+                env,
             })),
             ast::ExprKind::Seq(expr, next) => {
                 let task = self.eval(&expr, env)?;
@@ -264,8 +290,9 @@ impl<'a> Gc<'a> {
 
     pub fn mark(&mut self, r: Ref) {
         if let Some(val) = self.memory.store.get(r.index) {
-            self.result.mark[r.index] = true;
-            val.mark_rec(self);
+            if !mem::replace(&mut self.result.mark[r.index], true) {
+                val.mark_rec(self);
+            }
         }
     }
 

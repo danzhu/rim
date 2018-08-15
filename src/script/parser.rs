@@ -1,5 +1,5 @@
-use super::ast::*;
-use lib::*;
+use super::ast::{Bind, Decl, Expr, ExprKind};
+use lib::Pos;
 use std::{iter, result};
 
 #[derive(Clone, Debug)]
