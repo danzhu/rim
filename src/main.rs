@@ -14,14 +14,18 @@ mod script;
 //     ncurses::endwin()
 // }
 
+fn load(script: &mut script::Script) -> script::Result<()> {
+    script.load_file("test.fin")?;
+    script.run()
+}
+
 fn main() {
     let mut script = script::Script::new();
-    script.load_file("test.fin").expect("failed to load");
-    match script.run() {
+    match load(&mut script) {
         Ok(_) => {}
         Err(err) => {
-            script.runtime().dump();
-            panic!(format!("failed to run: {:?}", err));
+            script.memory().dump();
+            println!("failed to run: {:?}", err);
         }
     }
     // run().expect("ncurses error");

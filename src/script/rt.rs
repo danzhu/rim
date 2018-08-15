@@ -115,13 +115,13 @@ impl Value for Func {
 
 #[derive(Clone)]
 pub struct Native {
-    func: Rc<Fn(&mut Runtime, Ref) -> Result<Ref>>,
+    func: Rc<Fn(&mut Memory, Ref) -> Result<Ref>>,
 }
 
 impl Native {
     pub fn new<F>(f: F) -> Self
     where
-        F: Fn(&mut Runtime, Ref) -> Result<Ref> + 'static,
+        F: Fn(&mut Memory, Ref) -> Result<Ref> + 'static,
     {
         Native { func: Rc::new(f) }
     }
@@ -136,23 +136,23 @@ impl fmt::Debug for Native {
 impl Value for Native {}
 
 #[derive(Default)]
-pub struct Runtime {
-    memory: Vec<Option<Cell>>,
+pub struct Memory {
+    cells: Vec<Option<Cell>>,
     free: Vec<Ref>,
     debug: bool,
 }
 
-impl Runtime {
+impl Memory {
     pub fn new() -> Self {
         Default::default()
     }
 
     fn cell(&self, r: Ref) -> &Option<Cell> {
-        &self.memory[r.index]
+        &self.cells[r.index]
     }
 
     fn cell_mut(&mut self, r: Ref) -> &mut Option<Cell> {
-        &mut self.memory[r.index]
+        &mut self.cells[r.index]
     }
 
     pub fn debug(&mut self, debug: bool) {
@@ -176,15 +176,15 @@ impl Runtime {
                 r
             }
             None => {
-                let index = self.memory.len();
-                self.memory.push(c);
+                let index = self.cells.len();
+                self.cells.push(c);
                 Ref { index }
             }
         }
     }
 
     pub fn gc(&mut self, result: GcResult) {
-        for (index, (cell, mark)) in self.memory.iter_mut().zip(result.mark).enumerate() {
+        for (index, (cell, mark)) in self.cells.iter_mut().zip(result.mark).enumerate() {
             if !mark && cell.is_some() {
                 self.free.push(Ref { index });
                 *cell = None;
@@ -193,10 +193,10 @@ impl Runtime {
     }
 
     pub fn dump(&self) {
-        let total = self.memory.len();
+        let total = self.cells.len();
         let free = self.free.len();
         println!("Memory dump: {} in use, {} free", total - free, free);
-        for (i, cell) in self.memory.iter().enumerate() {
+        for (i, cell) in self.cells.iter().enumerate() {
             match cell {
                 Some(cell) => println!("{:4}: {:?}", i, cell.value),
                 None => {}
@@ -284,20 +284,20 @@ impl Runtime {
 }
 
 pub struct Gc<'a> {
-    runtime: &'a Runtime,
+    memory: &'a Memory,
     result: GcResult,
 }
 
 impl<'a> Gc<'a> {
-    pub fn new(runtime: &'a Runtime) -> Self {
+    pub fn new(memory: &'a Memory) -> Self {
         let mut mark = Vec::new();
-        mark.resize(runtime.memory.len(), false);
+        mark.resize(memory.cells.len(), false);
         let result = GcResult { mark };
-        Gc { runtime, result }
+        Gc { memory, result }
     }
 
     pub fn mark(&mut self, r: Ref) {
-        if let Some(cell) = self.runtime.cell(r) {
+        if let Some(cell) = self.memory.cell(r) {
             self.result.mark[r.index] = true;
             cell.value.mark_rec(self);
         }

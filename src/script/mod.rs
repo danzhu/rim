@@ -10,7 +10,7 @@ use std::{fs, io, path, result};
 pub enum Error {
     Io(io::Error),
     Parse(parser::Error),
-    Runtime(rt::Error),
+    Memory(rt::Error),
     MissingMain,
     NotTask(rt::Ref),
 }
@@ -29,7 +29,7 @@ impl From<parser::Error> for Error {
 
 impl From<rt::Error> for Error {
     fn from(err: rt::Error) -> Self {
-        Error::Runtime(err)
+        Error::Memory(err)
     }
 }
 
@@ -51,38 +51,38 @@ impl rt::Value for Task {
 }
 
 pub struct Script {
-    rt: rt::Runtime,
+    mem: rt::Memory,
     env: rt::Scope,
 }
 
 impl Script {
     pub fn new() -> Self {
-        let mut rt = rt::Runtime::new();
+        let mut mem = rt::Memory::new();
         let mut env = rt::Scope::new();
         let mut host = rt::Scope::new();
 
-        rt.debug(true);
+        mem.debug(true);
 
-        rt.insert("version", Task::Version, &mut host);
-        rt.insert(
+        mem.insert("version", Task::Version, &mut host);
+        mem.insert(
             "print",
-            rt::Native::new(|rt, v| Ok(rt.alloc(Task::Print(v)))),
+            rt::Native::new(|mem, v| Ok(mem.alloc(Task::Print(v)))),
             &mut host,
         );
 
-        rt.insert("rim", host, &mut env);
+        mem.insert("rim", host, &mut env);
 
-        Script { rt, env }
+        Script { mem, env }
     }
 
-    pub fn runtime(&self) -> &rt::Runtime {
-        &self.rt
+    pub fn memory(&self) -> &rt::Memory {
+        &self.mem
     }
 
     pub fn load(&mut self, content: &str) -> Result<()> {
         let decls = parser::parse(&content)?;
 
-        self.rt.load(decls, &mut self.env)?;
+        self.mem.load(decls, &mut self.env)?;
         Ok(())
     }
 
@@ -99,32 +99,32 @@ impl Script {
 
     pub fn run(&mut self) -> Result<()> {
         let mut func = self.env.get("main").ok_or(Error::MissingMain)?;
-        let mut arg = self.rt.alloc(());
+        let mut arg = self.mem.alloc(());
         let mut conts = Vec::new();
 
         loop {
-            let mut ret = self.rt.call(func, arg)?;
-            while let Some(seq) = self.rt.get::<rt::Seq>(ret) {
+            let mut ret = self.mem.call(func, arg)?;
+            while let Some(seq) = self.mem.get::<rt::Seq>(ret) {
                 conts.push(seq.next);
                 ret = seq.task;
             }
 
             let task = self
-                .rt
+                .mem
                 .get::<Task>(ret)
                 .ok_or_else(|| Error::NotTask(ret))?
                 .clone();
 
             arg = match task {
-                Task::Version => self.rt.alloc("0.1".to_string()),
+                Task::Version => self.mem.alloc("0.1".to_string()),
                 Task::Print(val) => {
-                    println!("{:?}", self.rt.get_any(val));
-                    self.rt.alloc(())
+                    println!("{:?}", self.mem.get_any(val));
+                    self.mem.alloc(())
                 }
             };
 
             let result = {
-                let mut gc = rt::Gc::new(&self.rt);
+                let mut gc = rt::Gc::new(&self.mem);
                 self.env.mark_rec(&mut gc);
                 gc.mark(func);
                 gc.mark(arg);
@@ -133,7 +133,7 @@ impl Script {
                 }
                 gc.run()
             };
-            self.rt.gc(result);
+            self.mem.gc(result);
 
             match conts.pop() {
                 Some(next) => func = next,
@@ -141,7 +141,7 @@ impl Script {
             }
         }
 
-        self.rt.dump();
+        self.mem.dump();
 
         Ok(())
     }
