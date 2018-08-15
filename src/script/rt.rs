@@ -103,8 +103,7 @@ pub struct Func {
 
 impl fmt::Debug for Func {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "Func /{} {}", self.param, self.body)?;
-        write!(f, "    {:?}", self.env)
+        write!(f, "Func /{} {} | {:?}", self.param, self.body, self.env)
     }
 }
 
@@ -140,6 +139,7 @@ impl Value for Native {}
 pub struct Runtime {
     memory: Vec<Option<Cell>>,
     free: Vec<Ref>,
+    debug: bool,
 }
 
 impl Runtime {
@@ -155,6 +155,10 @@ impl Runtime {
         &mut self.memory[r.index]
     }
 
+    pub fn debug(&mut self, debug: bool) {
+        self.debug = debug;
+    }
+
     pub fn alloc<T>(&mut self, val: T) -> Ref
     where
         T: Value,
@@ -163,7 +167,8 @@ impl Runtime {
             value: Box::new(val),
         });
 
-        match self.free.pop() {
+        let r = if self.debug { None } else { self.free.pop() };
+        match r {
             Some(r) => {
                 let cell = self.cell_mut(r);
                 assert!(cell.is_none(), "free list ref pointing to non-free cell");
@@ -188,10 +193,12 @@ impl Runtime {
     }
 
     pub fn dump(&self) {
-        println!("Memory dump:");
+        let total = self.memory.len();
+        let free = self.free.len();
+        println!("Memory dump: {} in use, {} free", total - free, free);
         for (i, cell) in self.memory.iter().enumerate() {
             match cell {
-                Some(cell) => println!("{}: {:?}", i, cell.value),
+                Some(cell) => println!("{:4}: {:?}", i, cell.value),
                 None => {}
             }
         }

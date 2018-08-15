@@ -61,6 +61,8 @@ impl Script {
         let mut env = rt::Scope::new();
         let mut host = rt::Scope::new();
 
+        rt.debug(true);
+
         rt.insert("version", Task::Version, &mut host);
         rt.insert(
             "print",
@@ -138,6 +140,8 @@ impl Script {
                 None => break,
             }
         }
+
+        self.rt.dump();
 
         Ok(())
     }
