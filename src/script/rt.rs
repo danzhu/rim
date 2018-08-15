@@ -17,6 +17,8 @@ pub trait Value: AsAny + fmt::Debug {
     fn as_any(&self) -> &any::Any {
         self.as_any_imp()
     }
+
+    fn mark_rec(&self, _gc: &mut Gc) {}
 }
 
 impl Value for () {}
@@ -36,6 +38,8 @@ pub type Result<T> = result::Result<T, Error>;
 pub struct Ref {
     index: usize,
 }
+
+impl Ref {}
 
 impl fmt::Debug for Ref {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -64,7 +68,13 @@ impl Scope {
     }
 }
 
-impl Value for Scope {}
+impl Value for Scope {
+    fn mark_rec(&self, gc: &mut Gc) {
+        for &r in self.binds.values() {
+            gc.mark(r);
+        }
+    }
+}
 
 #[derive(Debug)]
 struct Cell {
@@ -77,7 +87,12 @@ pub struct Seq {
     pub next: Ref,
 }
 
-impl Value for Seq {}
+impl Value for Seq {
+    fn mark_rec(&self, gc: &mut Gc) {
+        gc.mark(self.task);
+        gc.mark(self.next);
+    }
+}
 
 #[derive(Clone)]
 pub struct Func {
@@ -94,8 +109,8 @@ impl fmt::Debug for Func {
 }
 
 impl Value for Func {
-    fn as_any(&self) -> &any::Any {
-        self
+    fn mark_rec(&self, gc: &mut Gc) {
+        self.env.mark_rec(gc);
     }
 }
 
@@ -119,11 +134,7 @@ impl fmt::Debug for Native {
     }
 }
 
-impl Value for Native {
-    fn as_any(&self) -> &any::Any {
-        self
-    }
-}
+impl Value for Native {}
 
 #[derive(Default)]
 pub struct Runtime {
@@ -167,11 +178,13 @@ impl Runtime {
         }
     }
 
-    pub fn free(&mut self, r: Ref) {
-        self.free.push(r);
-        let cell = self.cell_mut(r);
-        assert!(cell.is_some(), "double free");
-        *cell = None;
+    pub fn gc(&mut self, result: GcResult) {
+        for (index, (cell, mark)) in self.memory.iter_mut().zip(result.mark).enumerate() {
+            if !mark && cell.is_some() {
+                self.free.push(Ref { index });
+                *cell = None;
+            }
+        }
     }
 
     pub fn dump(&self) {
@@ -235,13 +248,13 @@ impl Runtime {
                 for name in bind.names.iter().take(bind.names.len() - 1) {
                     let r = parent
                         .get(name)
-                        .ok_or(Error::NoMember(parent.clone(), name.clone()))?;
+                        .ok_or_else(|| Error::NoMember(parent.clone(), name.clone()))?;
                     parent = self.get::<Scope>(r).ok_or_else(|| Error::NonScope(r))?;
                 }
                 let name = bind.names.last().expect("empty bind");
                 let r = parent
                     .get(name)
-                    .ok_or(Error::NoMember(parent.clone(), name.clone()))?;
+                    .ok_or_else(|| Error::NoMember(parent.clone(), name.clone()))?;
                 Ok(r)
             }
             ast::ExprKind::Apply(func, arg) => {
@@ -261,4 +274,33 @@ impl Runtime {
             }
         }
     }
+}
+
+pub struct Gc<'a> {
+    runtime: &'a Runtime,
+    result: GcResult,
+}
+
+impl<'a> Gc<'a> {
+    pub fn new(runtime: &'a Runtime) -> Self {
+        let mut mark = Vec::new();
+        mark.resize(runtime.memory.len(), false);
+        let result = GcResult { mark };
+        Gc { runtime, result }
+    }
+
+    pub fn mark(&mut self, r: Ref) {
+        if let Some(cell) = self.runtime.cell(r) {
+            self.result.mark[r.index] = true;
+            cell.value.mark_rec(self);
+        }
+    }
+
+    pub fn run(self) -> GcResult {
+        self.result
+    }
+}
+
+pub struct GcResult {
+    mark: Vec<bool>,
 }

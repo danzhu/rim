@@ -2,6 +2,7 @@ mod ast;
 mod parser;
 mod rt;
 
+use self::rt::Value;
 use std::io::prelude::*;
 use std::{fs, io, path, result};
 
@@ -40,7 +41,14 @@ pub enum Task {
     Print(rt::Ref),
 }
 
-impl rt::Value for Task {}
+impl rt::Value for Task {
+    fn mark_rec(&self, gc: &mut rt::Gc) {
+        match self {
+            Task::Version => {}
+            Task::Print(r) => gc.mark(*r),
+        }
+    }
+}
 
 pub struct Script {
     rt: rt::Runtime,
@@ -90,33 +98,47 @@ impl Script {
     pub fn run(&mut self) -> Result<()> {
         let mut func = self.env.get("main").ok_or(Error::MissingMain)?;
         let mut arg = self.rt.alloc(());
-        let mut cont = Vec::new();
+        let mut conts = Vec::new();
 
         loop {
-            let mut val = self.rt.call(func, arg)?;
-            while let Some(seq) = self.rt.get::<rt::Seq>(val) {
-                cont.push(seq.next);
-                val = seq.task;
+            let mut ret = self.rt.call(func, arg)?;
+            while let Some(seq) = self.rt.get::<rt::Seq>(ret) {
+                conts.push(seq.next);
+                ret = seq.task;
             }
 
             let task = self
                 .rt
-                .get::<Task>(val)
-                .ok_or_else(|| Error::NotTask(val))?
+                .get::<Task>(ret)
+                .ok_or_else(|| Error::NotTask(ret))?
                 .clone();
 
-            match task {
-                Task::Version => arg = self.rt.alloc("0.1".to_string()),
-                Task::Print(val) => println!("{:?}", self.rt.get_any(val)),
-            }
+            arg = match task {
+                Task::Version => self.rt.alloc("0.1".to_string()),
+                Task::Print(val) => {
+                    println!("{:?}", self.rt.get_any(val));
+                    self.rt.alloc(())
+                }
+            };
 
-            match cont.pop() {
+            let result = {
+                let mut gc = rt::Gc::new(&self.rt);
+                self.env.mark_rec(&mut gc);
+                gc.mark(func);
+                gc.mark(arg);
+                for &cont in &conts {
+                    gc.mark(cont);
+                }
+                gc.run()
+            };
+            self.rt.gc(result);
+
+            match conts.pop() {
                 Some(next) => func = next,
                 None => break,
             }
         }
 
-        self.rt.dump();
         Ok(())
     }
 }
