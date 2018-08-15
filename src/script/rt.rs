@@ -32,14 +32,26 @@ pub enum Error {
 
 pub type Result<T> = result::Result<T, Error>;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct Ref {
     index: usize,
 }
 
-#[derive(Clone, Debug, Default)]
+impl fmt::Debug for Ref {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "[{}]", self.index)
+    }
+}
+
+#[derive(Clone, Default)]
 pub struct Scope {
     binds: HashMap<String, Ref>,
+}
+
+impl fmt::Debug for Scope {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Scope {:?}", self.binds)
+    }
 }
 
 impl Scope {
@@ -67,11 +79,18 @@ pub struct Seq {
 
 impl Value for Seq {}
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Func {
     param: String,
     body: ast::Expr,
     env: Scope,
+}
+
+impl fmt::Debug for Func {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "Func /{} {}", self.param, self.body)?;
+        write!(f, "    {:?}", self.env)
+    }
 }
 
 impl Value for Func {
