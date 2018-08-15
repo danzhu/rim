@@ -1,4 +1,5 @@
 use super::ast;
+use lib::Store;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::{any, fmt, result};
@@ -76,11 +77,6 @@ impl Value for Scope {
     }
 }
 
-#[derive(Debug)]
-struct Cell {
-    value: Box<Value>,
-}
-
 #[derive(Clone, Debug)]
 pub struct Seq {
     pub task: Ref,
@@ -137,22 +133,13 @@ impl Value for Native {}
 
 #[derive(Default)]
 pub struct Memory {
-    cells: Vec<Option<Cell>>,
-    free: Vec<Ref>,
+    store: Store<Box<Value>>,
     debug: bool,
 }
 
 impl Memory {
     pub fn new() -> Self {
         Default::default()
-    }
-
-    fn cell(&self, r: Ref) -> &Option<Cell> {
-        &self.cells[r.index]
-    }
-
-    fn cell_mut(&mut self, r: Ref) -> &mut Option<Cell> {
-        &mut self.cells[r.index]
     }
 
     pub fn debug(&mut self, debug: bool) {
@@ -163,53 +150,32 @@ impl Memory {
     where
         T: Value,
     {
-        let c = Some(Cell {
-            value: Box::new(val),
-        });
-
-        let r = if self.debug { None } else { self.free.pop() };
-        match r {
-            Some(r) => {
-                let cell = self.cell_mut(r);
-                assert!(cell.is_none(), "free list ref pointing to non-free cell");
-                *cell = c;
-                r
-            }
-            None => {
-                let index = self.cells.len();
-                self.cells.push(c);
-                Ref { index }
-            }
-        }
+        let index = self.store.add(Box::new(val));
+        Ref { index }
     }
 
-    pub fn gc(&mut self, result: GcResult) {
-        for (index, (cell, mark)) in self.cells.iter_mut().zip(result.mark).enumerate() {
-            if !mark && cell.is_some() {
-                self.free.push(Ref { index });
-                *cell = None;
+    pub fn gc(&mut self, result: &GcResult) {
+        for (i, mark) in result.mark.iter().enumerate() {
+            if !mark {
+                self.store.try_remove(i);
             }
         }
     }
 
     pub fn dump(&self) {
-        let total = self.cells.len();
-        let free = self.free.len();
-        println!("Memory dump: {} in use, {} free", total - free, free);
-        for (i, cell) in self.cells.iter().enumerate() {
-            match cell {
-                Some(cell) => println!("{:4}: {:?}", i, cell.value),
-                None => {}
-            }
+        let in_use = self.store.len();
+        let total = self.store.capacity();
+        println!("Memory dump: {} in use, {} free", in_use, total - in_use);
+        for (i, cell) in self.store.iter() {
+            println!("{:4}: {:?}", i, cell);
         }
     }
 
     pub fn get_any(&self, r: Ref) -> &Value {
-        &*self
-            .cell(r)
-            .as_ref()
+        &**self
+            .store
+            .get(r.index)
             .expect("attemp to access freed object")
-            .value
     }
 
     pub fn get<T>(&self, r: Ref) -> Option<&T>
@@ -291,15 +257,15 @@ pub struct Gc<'a> {
 impl<'a> Gc<'a> {
     pub fn new(memory: &'a Memory) -> Self {
         let mut mark = Vec::new();
-        mark.resize(memory.cells.len(), false);
+        mark.resize(memory.store.capacity(), false);
         let result = GcResult { mark };
         Gc { memory, result }
     }
 
     pub fn mark(&mut self, r: Ref) {
-        if let Some(cell) = self.memory.cell(r) {
+        if let Some(val) = self.memory.store.get(r.index) {
             self.result.mark[r.index] = true;
-            cell.value.mark_rec(self);
+            val.mark_rec(self);
         }
     }
 

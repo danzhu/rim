@@ -1,25 +1,8 @@
 mod imp;
 
+use lib::{Pos, Size};
 use libc::{c_int, c_ulong};
 use std::{char, result};
-
-#[derive(Clone, Copy, Debug)]
-pub struct Pos {
-    pub row: i32,
-    pub col: i32,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Size {
-    pub height: i32,
-    pub width: i32,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Rect {
-    pub pos: Pos,
-    pub size: Size,
-}
 
 #[derive(Clone, Copy, Debug)]
 pub enum Error {
@@ -82,7 +65,7 @@ pub fn keypad(on: bool) -> Result<()> {
 }
 
 pub fn move_to(pos: Pos) -> Result<()> {
-    check(unsafe { imp::wmove(imp::stdscr, pos.row as c_int, pos.col as c_int) })
+    check(unsafe { imp::wmove(imp::stdscr, pos.line as c_int, pos.column as c_int) })
 }
 
 pub fn erase() -> Result<()> {
@@ -97,12 +80,5 @@ pub fn size() -> Size {
     Size {
         height: unsafe { imp::getmaxy(imp::stdscr) },
         width: unsafe { imp::getmaxx(imp::stdscr) },
-    }
-}
-
-pub fn area() -> Rect {
-    Rect {
-        pos: Pos { row: 0, col: 0 },
-        size: size(),
     }
 }

@@ -133,7 +133,7 @@ impl Script {
                 }
                 gc.run()
             };
-            self.mem.gc(result);
+            self.mem.gc(&result);
 
             match conts.pop() {
                 Some(next) => func = next,

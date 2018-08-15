@@ -1,18 +1,20 @@
 extern crate libc;
 
-// mod ncurses;
+mod editor;
+mod lib;
+mod ncurses;
 mod script;
 
-// fn run() -> ncurses::Result<()> {
-//     ncurses::initscr()?;
-//     ncurses::cbreak()?;
-//     ncurses::keypad(true)?;
-//     ncurses::noecho()?;
+fn run() -> ncurses::Result<()> {
+    ncurses::initscr()?;
+    ncurses::cbreak()?;
+    ncurses::keypad(true)?;
+    ncurses::noecho()?;
 
-//     ncurses::getch()?;
+    ncurses::getch()?;
 
-//     ncurses::endwin()
-// }
+    ncurses::endwin()
+}
 
 fn load(script: &mut script::Script) -> script::Result<()> {
     script.load_file("test.fin")?;
@@ -28,5 +30,5 @@ fn main() {
             println!("failed to run: {:?}", err);
         }
     }
-    // run().expect("ncurses error");
+    run().expect("ncurses error");
 }

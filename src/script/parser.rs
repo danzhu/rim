@@ -1,4 +1,5 @@
 use super::ast::*;
+use lib::*;
 use std::{iter, result};
 
 #[derive(Clone, Debug)]
@@ -25,18 +26,6 @@ pub fn parse(s: &str) -> Result<Vec<Decl>> {
 pub struct Token {
     pos: Pos,
     kind: TokenKind,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Pos {
-    line: usize,
-    column: usize,
-}
-
-impl Pos {
-    fn new() -> Self {
-        Pos { line: 1, column: 1 }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -110,7 +99,7 @@ where
     type Item = Result<Token>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let pos = self.pos.clone();
+        let pos = self.pos;
 
         if self.pending_dedents > 0 {
             self.pending_dedents -= 1;
