@@ -10,7 +10,6 @@ pub enum Error {
     Io(io::Error),
     Parse(parser::Error),
     Memory(rt::Error),
-    MissingMain,
     NotTask(rt::Ref),
 }
 
@@ -99,7 +98,7 @@ impl Script {
     }
 
     pub fn run(&mut self) -> Result<()> {
-        let mut func = self.scope().get("main").ok_or(Error::MissingMain)?;
+        let mut func = self.mem.fetch("main", self.scope())?;
         let mut arg = self.mem.alloc(());
         let mut conts = Vec::new();
 

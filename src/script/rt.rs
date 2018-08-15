@@ -50,8 +50,6 @@ pub struct Ref {
     index: usize,
 }
 
-impl Ref {}
-
 impl fmt::Debug for Ref {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "[{}]", self.index)
@@ -61,21 +59,22 @@ impl fmt::Debug for Ref {
 #[derive(Clone, Default)]
 pub struct Scope {
     binds: HashMap<String, Ref>,
-}
-
-impl fmt::Debug for Scope {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Scope {:?}", self.binds)
-    }
+    parent: Option<Ref>,
 }
 
 impl Scope {
     pub fn new() -> Self {
         Default::default()
     }
+}
 
-    pub fn get(&self, name: &str) -> Option<Ref> {
-        self.binds.get(name).cloned()
+impl fmt::Debug for Scope {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Scope {:?}", self.binds)?;
+        if let Some(parent) = self.parent {
+            write!(f, " | {:?}", parent)?;
+        }
+        Ok(())
     }
 }
 
@@ -83,6 +82,9 @@ impl Value for Scope {
     fn mark_rec(&self, gc: &mut Gc) {
         for &r in self.binds.values() {
             gc.mark(r);
+            if let Some(parent) = self.parent {
+                gc.mark(parent);
+            }
         }
     }
 }
@@ -209,6 +211,17 @@ impl Memory {
         self.get_any_mut(r).as_any_mut().downcast_mut::<T>()
     }
 
+    pub fn fetch(&self, name: &str, scope: &Scope) -> Result<Ref> {
+        if let Some(r) = scope.binds.get(name) {
+            Ok(*r)
+        } else if let Some(p) = scope.parent {
+            let p = self.get::<Scope>(p).expect("scope parent not scope");
+            self.fetch(name, p)
+        } else {
+            Err(Error::NoMember(scope.clone(), name.to_string()))
+        }
+    }
+
     pub fn insert<Str, T>(&mut self, name: Str, val: T, env: &mut Scope)
     where
         Str: Into<String>,
@@ -231,10 +244,8 @@ impl Memory {
         if let Some(native) = self.get::<Native>(func).cloned() {
             (native.func)(self, arg)
         } else if let Some(func) = self.get::<Func>(func).cloned() {
-            let mut scope = self
-                .get::<Scope>(func.env)
-                .expect("function env not scope")
-                .clone();
+            let mut scope = Scope::new();
+            scope.parent = Some(func.env);
             scope.binds.insert(func.param, arg);
             let env = self.alloc(scope);
 
@@ -250,9 +261,7 @@ impl Memory {
                 let mut r = env;
                 for name in &bind.names {
                     let scope = self.get::<Scope>(r).ok_or_else(|| Error::NonScope(r))?;
-                    r = scope
-                        .get(&name)
-                        .ok_or_else(|| Error::NoMember(scope.clone(), name.clone()))?;
+                    r = self.fetch(&name, scope)?
                 }
                 Ok(r)
             }
