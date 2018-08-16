@@ -2,7 +2,7 @@ use super::ast;
 use lib::Store;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::{any, fmt, mem, result};
+use std::{any, fmt, mem};
 
 pub trait AsAny: 'static {
     fn as_any(&self) -> &any::Any;
@@ -28,15 +28,6 @@ impl Value for () {}
 
 impl Value for String {}
 
-#[derive(Clone, Debug)]
-pub enum Error {
-    NonCallable(Ref),
-    NonScope(Ref),
-    NoMember(Scope, String),
-}
-
-pub type Result<T> = result::Result<T, Error>;
-
 #[derive(Clone, Copy)]
 pub struct Ref {
     index: usize,
@@ -57,6 +48,28 @@ pub struct Scope {
 impl Scope {
     pub fn new() -> Self {
         Default::default()
+    }
+
+    pub fn from(parent: Ref) -> Self {
+        Scope {
+            binds: HashMap::new(),
+            parent: Some(parent),
+        }
+    }
+
+    pub fn get(&self, name: &str) -> Option<Ref> {
+        self.binds.get(name).cloned()
+    }
+
+    pub fn parent(&self) -> Option<Ref> {
+        self.parent
+    }
+
+    pub fn insert<Str>(&mut self, name: Str, r: Ref)
+    where
+        Str: Into<String>,
+    {
+        self.binds.insert(name.into(), r);
     }
 }
 
@@ -96,9 +109,9 @@ impl Value for Seq {
 
 #[derive(Clone)]
 pub struct Func {
-    param: String,
-    body: ast::Expr,
-    env: Ref,
+    pub param: String,
+    pub body: ast::Expr,
+    pub env: Ref,
 }
 
 impl fmt::Debug for Func {
@@ -115,15 +128,19 @@ impl Value for Func {
 
 #[derive(Clone)]
 pub struct Native {
-    func: Rc<Fn(&mut Memory, Ref) -> Result<Ref>>,
+    func: Rc<Fn(&mut Memory, Ref) -> Ref>,
 }
 
 impl Native {
     pub fn new<F>(f: F) -> Self
     where
-        F: Fn(&mut Memory, Ref) -> Result<Ref> + 'static,
+        F: Fn(&mut Memory, Ref) -> Ref + 'static,
     {
         Native { func: Rc::new(f) }
+    }
+
+    pub fn call(&self, mem: &mut Memory, r: Ref) -> Ref {
+        (self.func)(mem, r)
     }
 }
 
@@ -200,78 +217,6 @@ impl Memory {
         T: Value,
     {
         self.get_any_mut(r).as_any_mut().downcast_mut::<T>()
-    }
-
-    pub fn fetch(&self, name: &str, scope: &Scope) -> Result<Ref> {
-        if let Some(r) = scope.binds.get(name) {
-            Ok(*r)
-        } else if let Some(p) = scope.parent {
-            let p = self.get::<Scope>(p).expect("scope parent not scope");
-            self.fetch(name, p)
-        } else {
-            Err(Error::NoMember(scope.clone(), name.to_string()))
-        }
-    }
-
-    pub fn insert<Str, T>(&mut self, name: Str, val: T, env: &mut Scope)
-    where
-        Str: Into<String>,
-        T: Value,
-    {
-        env.binds.insert(name.into(), self.alloc(val));
-    }
-
-    pub fn load(&mut self, decls: Vec<ast::Decl>, env: Ref) -> Result<()> {
-        for decl in decls {
-            let r = self.eval(&decl.value, env)?;
-
-            let mut scope = self.get_mut::<Scope>(env).expect("load env not scope");
-            scope.binds.insert(decl.name, r);
-        }
-        Ok(())
-    }
-
-    pub fn call(&mut self, func: Ref, arg: Ref) -> Result<Ref> {
-        if let Some(native) = self.get::<Native>(func).cloned() {
-            (native.func)(self, arg)
-        } else if let Some(func) = self.get::<Func>(func).cloned() {
-            let mut scope = Scope::new();
-            scope.parent = Some(func.env);
-            scope.binds.insert(func.param, arg);
-            let env = self.alloc(scope);
-
-            self.eval(&func.body, env)
-        } else {
-            Err(Error::NonCallable(func))
-        }
-    }
-
-    pub fn eval(&mut self, expr: &ast::Expr, env: Ref) -> Result<Ref> {
-        match &expr.kind {
-            ast::ExprKind::Bind(bind) => {
-                let mut r = env;
-                for name in &bind.names {
-                    let scope = self.get::<Scope>(r).ok_or_else(|| Error::NonScope(r))?;
-                    r = self.fetch(&name, scope)?
-                }
-                Ok(r)
-            }
-            ast::ExprKind::Apply(func, arg) => {
-                let func = self.eval(&func, env)?;
-                let arg = self.eval(&arg, env)?;
-                self.call(func, arg)
-            }
-            ast::ExprKind::Func(name, body) => Ok(self.alloc(Func {
-                param: name.clone(),
-                body: (**body).clone(),
-                env,
-            })),
-            ast::ExprKind::Seq(expr, next) => {
-                let task = self.eval(&expr, env)?;
-                let next = self.eval(&next, env)?;
-                Ok(self.alloc(Seq { task, next }))
-            }
-        }
     }
 }
 

@@ -1,6 +1,6 @@
 mod ast;
 mod parser;
-mod rt;
+pub mod rt;
 
 use std::io::prelude::*;
 use std::{fs, io, path, result};
@@ -8,9 +8,10 @@ use std::{fs, io, path, result};
 #[derive(Debug)]
 pub enum Error {
     Io(io::Error),
-    Parse(parser::Error),
-    Memory(rt::Error),
-    NotTask(rt::Ref),
+    Parser(parser::Error),
+    NonCallable(rt::Ref),
+    NonScope(rt::Ref),
+    NoMember(rt::Scope, String),
 }
 
 impl From<io::Error> for Error {
@@ -21,72 +22,46 @@ impl From<io::Error> for Error {
 
 impl From<parser::Error> for Error {
     fn from(err: parser::Error) -> Self {
-        Error::Parse(err)
-    }
-}
-
-impl From<rt::Error> for Error {
-    fn from(err: rt::Error) -> Self {
-        Error::Memory(err)
+        Error::Parser(err)
     }
 }
 
 pub type Result<T> = result::Result<T, Error>;
 
-#[derive(Clone, Debug)]
-pub enum Task {
-    Version,
-    Print(rt::Ref),
-}
-
-impl rt::Value for Task {
-    fn mark_rec(&self, gc: &mut rt::Gc) {
-        match self {
-            Task::Version => {}
-            Task::Print(r) => gc.mark(*r),
-        }
-    }
-}
-
-pub struct Script {
+#[derive(Default)]
+pub struct Runtime {
     mem: rt::Memory,
-    env: rt::Ref,
 }
 
-impl Script {
+impl Runtime {
     pub fn new() -> Self {
-        let mut mem = rt::Memory::new();
-        let mut scope = rt::Scope::new();
-        let mut host = rt::Scope::new();
-
-        mem.debug(true);
-
-        mem.insert("version", Task::Version, &mut host);
-        mem.insert(
-            "print",
-            rt::Native::new(|mem, v| Ok(mem.alloc(Task::Print(v)))),
-            &mut host,
-        );
-
-        mem.insert("rim", host, &mut scope);
-
-        let env = mem.alloc(scope);
-
-        Script { mem, env }
+        Default::default()
     }
 
     pub fn memory(&self) -> &rt::Memory {
         &self.mem
     }
 
-    pub fn load(&mut self, content: &str) -> Result<()> {
+    pub fn memory_mut(&mut self) -> &mut rt::Memory {
+        &mut self.mem
+    }
+
+    pub fn load(&mut self, content: &str, env: rt::Ref) -> Result<()> {
         let decls = parser::parse(&content)?;
 
-        self.mem.load(decls, self.env)?;
+        for decl in decls {
+            let r = self.eval(&decl.value, env)?;
+
+            let scope = self
+                .mem
+                .get_mut::<rt::Scope>(env)
+                .expect("load env not scope");
+            scope.insert(decl.name, r);
+        }
         Ok(())
     }
 
-    pub fn load_file<P>(&mut self, path: P) -> Result<()>
+    pub fn load_file<P>(&mut self, path: P, env: rt::Ref) -> Result<()>
     where
         P: AsRef<path::Path>,
     {
@@ -94,65 +69,65 @@ impl Script {
         let mut content = String::new();
         file.read_to_string(&mut content)?;
 
-        self.load(&content)
+        self.load(&content, env)
     }
 
-    pub fn run(&mut self) -> Result<()> {
-        let mut func = self.mem.fetch("main", self.scope())?;
-        let mut arg = self.mem.alloc(());
-        let mut conts = Vec::new();
-
-        loop {
-            let mut ret = self.mem.call(func, arg)?;
-            while let Some(seq) = self.mem.get::<rt::Seq>(ret) {
-                conts.push(seq.next);
-                ret = seq.task;
-            }
-
-            let task = self
+    pub fn fetch(&self, name: &str, scope: &rt::Scope) -> Result<rt::Ref> {
+        if let Some(r) = scope.get(name) {
+            Ok(r)
+        } else if let Some(p) = scope.parent() {
+            let p = self
                 .mem
-                .get::<Task>(ret)
-                .ok_or_else(|| Error::NotTask(ret))?
-                .clone();
-
-            arg = match task {
-                Task::Version => self.mem.alloc("0.1".to_string()),
-                Task::Print(val) => {
-                    println!("{:?}", self.mem.get_any(val));
-                    self.mem.alloc(())
-                }
-            };
-
-            match conts.pop() {
-                Some(next) => func = next,
-                None => break,
-            }
-
-            let result = {
-                let mut gc = rt::Gc::new(&self.mem);
-                gc.mark(self.env);
-                gc.mark(func);
-                gc.mark(arg);
-                for &cont in &conts {
-                    gc.mark(cont);
-                }
-                gc.run()
-            };
-            self.mem.gc(&result);
+                .get::<rt::Scope>(p)
+                .expect("scope parent not scope");
+            self.fetch(name, p)
+        } else {
+            Err(Error::NoMember(scope.clone(), name.to_string()))
         }
-
-        self.mem.dump();
-
-        Ok(())
     }
 
-    fn scope(&self) -> &rt::Scope {
-        self.mem.get::<rt::Scope>(self.env).expect("env not scope")
-    }
-}
+    pub fn call(&mut self, func: rt::Ref, arg: rt::Ref) -> Result<rt::Ref> {
+        if let Some(native) = self.mem.get::<rt::Native>(func).cloned() {
+            Ok(native.call(&mut self.mem, arg))
+        } else if let Some(func) = self.mem.get::<rt::Func>(func).cloned() {
+            let mut scope = rt::Scope::from(func.env);
+            scope.insert(func.param, arg);
+            let env = self.mem.alloc(scope);
 
-impl Default for Script {
-    fn default() -> Self {
-        Script::new()
+            self.eval(&func.body, env)
+        } else {
+            Err(Error::NonCallable(func))
+        }
+    }
+
+    pub fn eval(&mut self, expr: &ast::Expr, env: rt::Ref) -> Result<rt::Ref> {
+        match &expr.kind {
+            ast::ExprKind::Bind(bind) => {
+                let mut r = env;
+                for name in &bind.names {
+                    let scope = self
+                        .mem
+                        .get::<rt::Scope>(r)
+                        .ok_or_else(|| Error::NonScope(r))?;
+                    r = self.fetch(&name, scope)?
+                }
+                Ok(r)
+            }
+            ast::ExprKind::Apply(func, arg) => {
+                let func = self.eval(&func, env)?;
+                let arg = self.eval(&arg, env)?;
+                self.call(func, arg)
+            }
+            ast::ExprKind::Func(param, body) => {
+                let param = param.clone();
+                let body = (**body).clone();
+                Ok(self.mem.alloc(rt::Func { param, body, env }))
+            }
+            ast::ExprKind::Seq(expr, next) => {
+                let task = self.eval(&expr, env)?;
+                let next = self.eval(&next, env)?;
+                Ok(self.mem.alloc(rt::Seq { task, next }))
+            }
+        }
     }
 }

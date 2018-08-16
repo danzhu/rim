@@ -53,17 +53,17 @@ impl<T> Store<T> {
     }
 
     pub fn get(&self, index: usize) -> Option<&T> {
-        self.values[index].as_ref().value()
+        self.values.get(index).and_then(|c| c.as_ref().value())
     }
 
     pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
-        self.values[index].as_mut().value()
+        self.values.get_mut(index).and_then(|c| c.as_mut().value())
     }
 
     pub fn add(&mut self, value: T) -> usize {
         self.len += 1;
-        let cell = if self.reuse { self.free } else { None };
-        match cell {
+        let free = if self.reuse { self.free } else { None };
+        match free {
             Some(index) => {
                 let cell = &mut self.values[index];
                 self.free = cell.free().expect("free list pointing to non-free cell");
@@ -79,20 +79,10 @@ impl<T> Store<T> {
     }
 
     pub fn remove(&mut self, index: usize) -> T {
-        self.try_remove(index).expect("freeing free cell")
-    }
-
-    pub fn try_remove(&mut self, index: usize) -> Option<T> {
-        if let cell @ Cell::Value(_) = &mut self.values[index] {
-            let value = mem::replace(cell, Cell::Free(self.free))
-                .value()
-                .expect("cell changed");
-            self.free = Some(index);
-            self.len -= 1;
-            Some(value)
-        } else {
-            None
-        }
+        let cell = mem::replace(&mut self.values[index], Cell::Free(self.free));
+        self.free = Some(index);
+        self.len -= 1;
+        cell.value().expect("removing free cell")
     }
 }
 
@@ -106,13 +96,13 @@ impl<T> ops::Index<usize> for Store<T> {
     type Output = T;
 
     fn index(&self, index: usize) -> &T {
-        self.get(index).expect("freed cell")
+        self.get(index).expect("index out of range or removed")
     }
 }
 
 impl<T> ops::IndexMut<usize> for Store<T> {
     fn index_mut(&mut self, index: usize) -> &mut T {
-        self.get_mut(index).expect("freed cell")
+        self.get_mut(index).expect("index out of range or removed")
     }
 }
 
