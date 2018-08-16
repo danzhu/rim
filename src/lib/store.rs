@@ -6,6 +6,7 @@ pub struct Store<T> {
     values: Vec<Cell<T>>,
     free: Free,
     len: usize,
+    reuse: bool,
 }
 
 impl<T> Store<T> {
@@ -14,7 +15,12 @@ impl<T> Store<T> {
             values: Vec::new(),
             free: None,
             len: 0,
+            reuse: true,
         }
+    }
+
+    pub fn reuse(&mut self, reuse: bool) {
+        self.reuse = reuse;
     }
 
     pub fn len(&self) -> usize {
@@ -39,6 +45,13 @@ impl<T> Store<T> {
             .filter_map(|(i, c)| c.as_mut().value().map(|v| (i, v)))
     }
 
+    pub fn keys<'a>(&'a self) -> impl Iterator<Item = usize> + 'a {
+        self.values
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| c.as_ref().value().map(|_| i))
+    }
+
     pub fn get(&self, index: usize) -> Option<&T> {
         self.values[index].as_ref().value()
     }
@@ -49,7 +62,8 @@ impl<T> Store<T> {
 
     pub fn add(&mut self, value: T) -> usize {
         self.len += 1;
-        match self.free {
+        let cell = if self.reuse { self.free } else { None };
+        match cell {
             Some(index) => {
                 let cell = &mut self.values[index];
                 self.free = cell.free().expect("free list pointing to non-free cell");

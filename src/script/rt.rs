@@ -5,30 +5,22 @@ use std::rc::Rc;
 use std::{any, fmt, mem, result};
 
 pub trait AsAny: 'static {
-    fn as_any_imp(&self) -> &any::Any;
+    fn as_any(&self) -> &any::Any;
 
-    fn as_any_mut_imp(&mut self) -> &mut any::Any;
+    fn as_any_mut(&mut self) -> &mut any::Any;
 }
 
 impl<T: any::Any> AsAny for T {
-    fn as_any_imp(&self) -> &any::Any {
+    fn as_any(&self) -> &any::Any {
         self
     }
 
-    fn as_any_mut_imp(&mut self) -> &mut any::Any {
+    fn as_any_mut(&mut self) -> &mut any::Any {
         self
     }
 }
 
 pub trait Value: AsAny + fmt::Debug {
-    fn as_any(&self) -> &any::Any {
-        self.as_any_imp()
-    }
-
-    fn as_any_mut(&mut self) -> &mut any::Any {
-        self.as_any_mut_imp()
-    }
-
     fn mark_rec(&self, _gc: &mut Gc) {}
 }
 
@@ -146,7 +138,6 @@ impl Value for Native {}
 #[derive(Default)]
 pub struct Memory {
     store: Store<Box<Value>>,
-    debug: bool,
 }
 
 impl Memory {
@@ -155,7 +146,7 @@ impl Memory {
     }
 
     pub fn debug(&mut self, debug: bool) {
-        self.debug = debug;
+        self.store.reuse(!debug);
     }
 
     pub fn alloc<T>(&mut self, val: T) -> Ref
@@ -169,7 +160,7 @@ impl Memory {
     pub fn gc(&mut self, result: &GcResult) {
         for (i, mark) in result.mark.iter().enumerate() {
             if !mark {
-                self.store.try_remove(i);
+                self.store.remove(i);
             }
         }
     }
@@ -292,7 +283,11 @@ pub struct Gc<'a> {
 impl<'a> Gc<'a> {
     pub fn new(memory: &'a Memory) -> Self {
         let mut mark = Vec::new();
-        mark.resize(memory.store.capacity(), false);
+        mark.resize(memory.store.capacity(), true);
+        for i in memory.store.keys() {
+            mark[i] = false;
+        }
+
         let result = GcResult { mark };
         Gc { memory, result }
     }

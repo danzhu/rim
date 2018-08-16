@@ -123,6 +123,11 @@ impl Script {
                 }
             };
 
+            match conts.pop() {
+                Some(next) => func = next,
+                None => break,
+            }
+
             let result = {
                 let mut gc = rt::Gc::new(&self.mem);
                 gc.mark(self.env);
@@ -134,11 +139,6 @@ impl Script {
                 gc.run()
             };
             self.mem.gc(&result);
-
-            match conts.pop() {
-                Some(next) => func = next,
-                None => break,
-            }
         }
 
         self.mem.dump();
