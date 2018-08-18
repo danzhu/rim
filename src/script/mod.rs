@@ -50,7 +50,22 @@ impl Runtime {
         let decls = parser::parse(&content)?;
 
         for decl in decls {
-            let r = self.eval(&decl.value, env)?;
+            let r = match decl.kind {
+                ast::DeclKind::Type(tp) => {
+                    let tp = rt::Type {
+                        name: decl.name.clone(),
+                        fields: tp.fields,
+                    };
+                    let tp = self.mem.alloc(tp);
+
+                    let st = rt::Struct {
+                        tp,
+                        fields: Vec::new(),
+                    };
+                    self.mem.alloc(st)
+                }
+                ast::DeclKind::Bind(expr) => self.eval(&expr, env)?,
+            };
 
             let scope = self
                 .mem
@@ -95,6 +110,9 @@ impl Runtime {
             let env = self.mem.alloc(scope);
 
             self.eval(&func.body, env)
+        } else if let Some(mut var) = self.mem.get::<rt::Struct>(func).cloned() {
+            var.fields.push(arg);
+            Ok(self.mem.alloc(var))
         } else {
             Err(Error::NonCallable(func))
         }

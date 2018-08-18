@@ -3,12 +3,41 @@ use std::fmt;
 #[derive(Clone, Debug)]
 pub struct Decl {
     pub name: String,
-    pub value: Expr,
+    pub kind: DeclKind,
 }
 
 impl fmt::Display for Decl {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{} = {}", self.name, self.value)
+        write!(f, "{} = {}", self.name, self.kind)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum DeclKind {
+    Type(Type),
+    Bind(Expr),
+}
+
+impl fmt::Display for DeclKind {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            DeclKind::Type(tp) => write!(f, "{}", tp),
+            DeclKind::Bind(expr) => write!(f, "{}", expr),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Type {
+    pub fields: Vec<String>,
+}
+
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for field in &self.fields {
+            write!(f, "{}", field)?;
+        }
+        Ok(())
     }
 }
 
@@ -21,9 +50,9 @@ impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self.kind {
             ExprKind::Bind(bind) => write!(f, "{}", bind),
-            ExprKind::Apply(func, arg) => write!(f, "{} {}", func, arg),
+            ExprKind::Apply(func, arg) => write!(f, "({} {})", func, arg),
             ExprKind::Func(param, body) => write!(f, "/{} {}", param, body),
-            ExprKind::Seq(task, next) => write!(f, "{} > {}", task, next),
+            ExprKind::Seq(task, next) => write!(f, "({} > {})", task, next),
         }
     }
 }

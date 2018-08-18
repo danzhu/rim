@@ -1,4 +1,4 @@
-use super::ast::{Bind, Decl, Expr, ExprKind};
+use super::ast::{Bind, Decl, DeclKind, Expr, ExprKind, Type};
 use lib::Pos;
 use std::{iter, result};
 
@@ -36,6 +36,8 @@ enum TokenKind {
     Def,
     Colon,
     Arrow,
+    LeftParen,
+    RightParen,
     Id(String),
 }
 
@@ -57,7 +59,7 @@ where
         Lexer {
             source: source.peekable(),
             pos: Pos::new(),
-            indents: Vec::new(),
+            indents: vec![0],
             pending_dedents: 0,
         }
     }
@@ -111,7 +113,7 @@ where
 
         let ch = match self.source.peek() {
             None => {
-                self.pending_dedents = self.indents.len();
+                self.pending_dedents = self.indents.len() - 1;
                 return if self.pending_dedents > 0 {
                     self.next()
                 } else {
@@ -132,12 +134,13 @@ where
             let next = self.source.peek().cloned();
             match (ch, next) {
                 (':', _) => TokenKind::Colon,
+                ('(', _) => TokenKind::LeftParen,
+                (')', _) => TokenKind::RightParen,
                 ('-', Some('>')) => {
                     self.read().unwrap();
                     TokenKind::Arrow
                 }
                 ('\n', _) => {
-                    self.read();
                     let mut ind = 0;
                     while let Some(&' ') = self.source.peek() {
                         ind += 1;
@@ -247,22 +250,35 @@ where
     }
 
     fn decl(&mut self) -> Result<Decl> {
+        while self.consume(&TokenKind::Newline)? {}
+
         self.expect(&TokenKind::Def)?;
         let name = self.id()?;
-        let params = self.end_by(Self::id, Some(&TokenKind::Indent))?;
 
-        self.expect(&TokenKind::Indent)?;
-        let body = self.block()?;
-        self.expect(&TokenKind::Dedent)?;
+        let kind = if name.chars().next().expect("empty id").is_uppercase() {
+            let fields = self.end_by(Self::id, Some(&TokenKind::Newline))?;
 
-        let mut value = body;
-        for param in params.into_iter().rev() {
-            value = Expr {
-                kind: ExprKind::Func(param, Box::new(value)),
+            let tp = Type { fields };
+
+            DeclKind::Type(tp)
+        } else {
+            let params = self.end_by(Self::id, Some(&TokenKind::Indent))?;
+
+            self.expect(&TokenKind::Indent)?;
+            let body = self.block()?;
+            self.expect(&TokenKind::Dedent)?;
+
+            let mut value = body;
+            for param in params.into_iter().rev() {
+                value = Expr {
+                    kind: ExprKind::Func(param, Box::new(value)),
+                }
             }
-        }
 
-        Ok(Decl { name, value })
+            DeclKind::Bind(value)
+        };
+
+        Ok(Decl { name, kind })
     }
 
     fn block(&mut self) -> Result<Expr> {
@@ -296,7 +312,7 @@ where
         loop {
             if let Some(Token { kind, .. }) = self.peek()? {
                 match kind {
-                    TokenKind::Id(_) => {}
+                    TokenKind::Id(_) | TokenKind::LeftParen => {}
                     _ => break,
                 }
             }
@@ -311,10 +327,26 @@ where
     }
 
     fn atom(&mut self) -> Result<Expr> {
-        let bind = self.bind()?;
-        Ok(Expr {
-            kind: ExprKind::Bind(bind),
-        })
+        let expr = match self
+            .peek()?
+            .ok_or_else(|| Error::Expecting("value".to_string(), None))?
+            .kind
+        {
+            TokenKind::Id(_) => {
+                let bind = self.bind()?;
+                Expr {
+                    kind: ExprKind::Bind(bind),
+                }
+            }
+            TokenKind::LeftParen => {
+                self.next()?;
+                let expr = self.expr()?;
+                self.expect(&TokenKind::RightParen)?;
+                expr
+            }
+            _ => return Err(Error::Expecting("value".to_string(), self.next()?)),
+        };
+        Ok(expr)
     }
 
     fn bind(&mut self) -> Result<Bind> {

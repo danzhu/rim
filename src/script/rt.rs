@@ -95,6 +95,29 @@ impl Value for Scope {
 }
 
 #[derive(Clone, Debug)]
+pub struct Type {
+    pub name: String,
+    pub fields: Vec<String>,
+}
+
+impl Value for Type {}
+
+#[derive(Clone, Debug)]
+pub struct Struct {
+    pub tp: Ref,
+    pub fields: Vec<Ref>,
+}
+
+impl Value for Struct {
+    fn mark_rec(&self, gc: &mut Gc) {
+        gc.mark(self.tp);
+        for &field in &self.fields {
+            gc.mark(field);
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct Seq {
     pub task: Ref,
     pub next: Ref,

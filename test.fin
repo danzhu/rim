@@ -1,7 +1,11 @@
+def Cons head tail
+def Null
+
 def test
     rim:version -> v
     rim:print v
 
 def main
     test
+    rim:print (Cons test test)
     test
