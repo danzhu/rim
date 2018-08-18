@@ -69,25 +69,23 @@ impl Rim {
     fn run(&mut self) -> Result<()> {
         self.rt.load_file("test.fin", self.root)?;
 
-        let mut func = self.rt.fetch("main", self.root())?;
-        let mut arg = self.rt.memory_mut().alloc(());
+        let mut val = self.rt.fetch("main", self.root())?;
         let mut conts = Vec::new();
 
         loop {
-            let mut ret = self.rt.call(func, arg)?;
-            while let Some(seq) = self.rt.memory().get::<rt::Seq>(ret) {
+            while let Some(seq) = self.rt.memory().get::<rt::Seq>(val) {
                 conts.push(seq.next);
-                ret = seq.task;
+                val = seq.task;
             }
 
             let task = self
                 .rt
                 .memory()
-                .get::<Task>(ret)
-                .ok_or_else(|| Error::NotTask(ret))?
+                .get::<Task>(val)
+                .ok_or_else(|| Error::NotTask(val))?
                 .clone();
 
-            arg = match task {
+            let arg = match task {
                 Task::Version => self.rt.memory_mut().alloc("0.1".to_string()),
                 Task::Print(val) => {
                     println!("{:?}", self.rt.memory().get_any(val));
@@ -95,16 +93,16 @@ impl Rim {
                 }
             };
 
-            match conts.pop() {
-                Some(next) => func = next,
+            let func = match conts.pop() {
+                Some(func) => func,
                 None => break,
-            }
+            };
+            val = self.rt.call(func, arg)?;
 
             let result = {
                 let mut gc = rt::Gc::new(self.rt.memory());
                 gc.mark(self.root);
-                gc.mark(func);
-                gc.mark(arg);
+                gc.mark(val);
                 for &cont in &conts {
                     gc.mark(cont);
                 }

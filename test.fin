@@ -1,7 +1,7 @@
-def main arg
-    test
-    test
-
 def test
     rim:version -> v
     rim:print v
+
+def main
+    test
+    test
