@@ -132,7 +132,7 @@ impl Value for Seq {
 
 #[derive(Clone)]
 pub struct Func {
-    pub param: String,
+    pub param: ast::Pattern,
     pub body: ast::Expr,
     pub env: Ref,
 }

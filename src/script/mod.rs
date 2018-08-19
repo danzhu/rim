@@ -12,6 +12,7 @@ pub enum Error {
     NonCallable(rt::Ref),
     NonScope(rt::Ref),
     NoMember(rt::Scope, String),
+    PatternFail(rt::Ref),
 }
 
 impl From<io::Error> for Error {
@@ -101,13 +102,29 @@ impl Runtime {
         }
     }
 
+    fn pattern(
+        &mut self,
+        pat: &ast::Pattern,
+        val: rt::Ref,
+        env: rt::Ref,
+    ) -> Result<Option<rt::Ref>> {
+        let mut scope = rt::Scope::from(env);
+
+        match &pat.kind {
+            ast::PatternKind::Bind(name) => scope.insert(name.clone(), val),
+            ast::PatternKind::Ignore => {}
+        }
+
+        Ok(Some(self.mem.alloc(scope)))
+    }
+
     pub fn call(&mut self, func: rt::Ref, arg: rt::Ref) -> Result<rt::Ref> {
         if let Some(native) = self.mem.get::<rt::Native>(func).cloned() {
             Ok(native.call(&mut self.mem, arg))
         } else if let Some(func) = self.mem.get::<rt::Func>(func).cloned() {
-            let mut scope = rt::Scope::from(func.env);
-            scope.insert(func.param, arg);
-            let env = self.mem.alloc(scope);
+            let env = self
+                .pattern(&func.param, arg, func.env)?
+                .ok_or_else(|| Error::PatternFail(arg))?;
 
             self.eval(&func.body, env)
         } else if let Some(mut var) = self.mem.get::<rt::Struct>(func).cloned() {

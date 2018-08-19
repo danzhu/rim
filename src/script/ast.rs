@@ -61,8 +61,28 @@ impl fmt::Display for Expr {
 pub enum ExprKind {
     Bind(Bind),
     Apply(Box<Expr>, Box<Expr>),
-    Func(String, Box<Expr>),
+    Func(Pattern, Box<Expr>),
     Seq(Box<Expr>, Box<Expr>),
+}
+
+#[derive(Clone, Debug)]
+pub struct Pattern {
+    pub kind: PatternKind,
+}
+
+impl fmt::Display for Pattern {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match &self.kind {
+            PatternKind::Bind(name) => write!(f, "{}", name),
+            PatternKind::Ignore => write!(f, "_"),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum PatternKind {
+    Bind(String),
+    Ignore,
 }
 
 #[derive(Clone, Debug)]

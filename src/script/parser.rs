@@ -1,4 +1,4 @@
-use super::ast::{Bind, Decl, DeclKind, Expr, ExprKind, Type};
+use super::ast::{Bind, Decl, DeclKind, Expr, ExprKind, Pattern, PatternKind, Type};
 use lib::Pos;
 use std::{iter, result};
 
@@ -267,7 +267,7 @@ where
 
             DeclKind::Type(tp)
         } else {
-            let params = self.end_by(Self::id, Some(&TokenKind::Indent))?;
+            let params = self.end_by(Self::pattern, Some(&TokenKind::Indent))?;
 
             self.expect(&TokenKind::Indent)?;
             let body = self.block()?;
@@ -288,7 +288,7 @@ where
 
     fn block(&mut self) -> Result<Expr> {
         let kind = if self.consume(&TokenKind::Let)? {
-            let name = self.id()?;
+            let pat = self.pattern()?;
             self.expect(&TokenKind::Equal)?;
             let value = self.expr()?;
             self.expect(&TokenKind::Newline)?;
@@ -296,18 +296,20 @@ where
             let next = self.block()?;
 
             let func = Expr {
-                kind: ExprKind::Func(name, Box::new(next)),
+                kind: ExprKind::Func(pat, Box::new(next)),
             };
             ExprKind::Apply(Box::new(func), Box::new(value))
         } else {
             let value = self.expr()?;
 
-            let name = if self.consume(&TokenKind::Arrow)? {
-                let name = self.id()?;
+            let pat = if self.consume(&TokenKind::Arrow)? {
+                let name = self.pattern()?;
                 self.expect(&TokenKind::Newline)?;
                 name
             } else if self.consume(&TokenKind::Newline)? {
-                "_".to_string()
+                Pattern {
+                    kind: PatternKind::Ignore,
+                }
             } else {
                 return Ok(value);
             };
@@ -315,7 +317,7 @@ where
             let next = self.block()?;
 
             let func = Expr {
-                kind: ExprKind::Func(name, Box::new(next)),
+                kind: ExprKind::Func(pat, Box::new(next)),
             };
             ExprKind::Seq(Box::new(value), Box::new(func))
         };
@@ -364,6 +366,16 @@ where
             _ => return Err(Error::Expecting("value".to_string(), self.next()?)),
         };
         Ok(expr)
+    }
+
+    fn pattern(&mut self) -> Result<Pattern> {
+        let name = self.id()?;
+        let kind = if name == "_" {
+            PatternKind::Ignore
+        } else {
+            PatternKind::Bind(name)
+        };
+        Ok(Pattern { kind })
     }
 
     fn bind(&mut self) -> Result<Bind> {
