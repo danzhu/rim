@@ -74,6 +74,13 @@ impl fmt::Display for Pattern {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self.kind {
             PatternKind::Bind(name) => write!(f, "{}", name),
+            PatternKind::Struct(tp, fields) => {
+                write!(f, "{}", tp)?;
+                for field in fields {
+                    write!(f, "{}", field)?;
+                }
+                Ok(())
+            }
             PatternKind::Ignore => write!(f, "_"),
         }
     }
@@ -82,6 +89,7 @@ impl fmt::Display for Pattern {
 #[derive(Clone, Debug)]
 pub enum PatternKind {
     Bind(String),
+    Struct(Bind, Vec<Pattern>),
     Ignore,
 }
 

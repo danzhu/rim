@@ -28,7 +28,7 @@ impl Value for () {}
 
 impl Value for String {}
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Ref {
     index: usize,
 }

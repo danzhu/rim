@@ -125,8 +125,8 @@ where
             Some(&ch) => ch,
         };
 
-        let kind = if ch.is_alphabetic() {
-            let s = self.read_while(char::is_alphanumeric);
+        let kind = if ch.is_alphabetic() || ch == '_' {
+            let s = self.read_while(|c| c.is_alphanumeric() || c == '_');
             match s.as_ref() {
                 "def" => TokenKind::Def,
                 "let" => TokenKind::Let,
@@ -369,11 +369,18 @@ where
     }
 
     fn pattern(&mut self) -> Result<Pattern> {
-        let name = self.id()?;
-        let kind = if name == "_" {
-            PatternKind::Ignore
+        let kind = if self.consume(&TokenKind::LeftParen)? {
+            let tp = self.bind()?;
+            let fields = self.end_by(Self::pattern, Some(&TokenKind::RightParen))?;
+            self.expect(&TokenKind::RightParen)?;
+            PatternKind::Struct(tp, fields)
         } else {
-            PatternKind::Bind(name)
+            let name = self.id()?;
+            if name == "_" {
+                PatternKind::Ignore
+            } else {
+                PatternKind::Bind(name)
+            }
         };
         Ok(Pattern { kind })
     }

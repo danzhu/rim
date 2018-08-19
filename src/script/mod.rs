@@ -11,6 +11,7 @@ pub enum Error {
     Parser(parser::Error),
     NonCallable(rt::Ref),
     NonScope(rt::Ref),
+    NonStruct(rt::Ref),
     NoMember(rt::Scope, String),
     PatternFail(rt::Ref),
 }
@@ -102,29 +103,15 @@ impl Runtime {
         }
     }
 
-    fn pattern(
-        &mut self,
-        pat: &ast::Pattern,
-        val: rt::Ref,
-        env: rt::Ref,
-    ) -> Result<Option<rt::Ref>> {
-        let mut scope = rt::Scope::from(env);
-
-        match &pat.kind {
-            ast::PatternKind::Bind(name) => scope.insert(name.clone(), val),
-            ast::PatternKind::Ignore => {}
-        }
-
-        Ok(Some(self.mem.alloc(scope)))
-    }
-
     pub fn call(&mut self, func: rt::Ref, arg: rt::Ref) -> Result<rt::Ref> {
         if let Some(native) = self.mem.get::<rt::Native>(func).cloned() {
             Ok(native.call(&mut self.mem, arg))
         } else if let Some(func) = self.mem.get::<rt::Func>(func).cloned() {
-            let env = self
-                .pattern(&func.param, arg, func.env)?
-                .ok_or_else(|| Error::PatternFail(arg))?;
+            let mut scope = rt::Scope::from(func.env);
+            if !self.pattern(&func.param, arg, func.env, &mut scope)? {
+                return Err(Error::PatternFail(arg));
+            }
+            let env = self.mem.alloc(scope);
 
             self.eval(&func.body, env)
         } else if let Some(mut var) = self.mem.get::<rt::Struct>(func).cloned() {
@@ -146,17 +133,7 @@ impl Runtime {
 
     pub fn eval(&mut self, expr: &ast::Expr, env: rt::Ref) -> Result<rt::Ref> {
         match &expr.kind {
-            ast::ExprKind::Bind(bind) => {
-                let mut r = env;
-                for name in &bind.names {
-                    let scope = self
-                        .mem
-                        .get::<rt::Scope>(r)
-                        .ok_or_else(|| Error::NonScope(r))?;
-                    r = self.fetch(&name, scope)?
-                }
-                Ok(r)
-            }
+            ast::ExprKind::Bind(bind) => self.get_bind(bind, env),
             ast::ExprKind::Apply(func, arg) => {
                 let func = self.eval(&func, env)?;
                 let arg = self.eval(&arg, env)?;
@@ -173,5 +150,52 @@ impl Runtime {
                 Ok(self.mem.alloc(rt::Seq { task, next }))
             }
         }
+    }
+
+    fn pattern(
+        &self,
+        pat: &ast::Pattern,
+        val: rt::Ref,
+        env: rt::Ref,
+        scope: &mut rt::Scope,
+    ) -> Result<bool> {
+        match &pat.kind {
+            ast::PatternKind::Bind(name) => scope.insert(name.clone(), val),
+            ast::PatternKind::Struct(tp, fields) => {
+                let tp = self.get_bind(tp, env)?;
+                let tp = self
+                    .mem
+                    .get::<rt::Struct>(tp)
+                    .ok_or_else(|| Error::NonStruct(tp))?;
+                let val = self
+                    .mem
+                    .get::<rt::Struct>(val)
+                    .ok_or_else(|| Error::NonStruct(val))?;
+
+                if tp.tp != val.tp {
+                    return Ok(false);
+                }
+                for (pat, &field) in fields.iter().zip(&val.fields) {
+                    if !self.pattern(pat, field, env, scope)? {
+                        return Ok(false);
+                    }
+                }
+            }
+            ast::PatternKind::Ignore => {}
+        }
+
+        Ok(true)
+    }
+
+    fn get_bind(&self, bind: &ast::Bind, env: rt::Ref) -> Result<rt::Ref> {
+        let mut r = env;
+        for name in &bind.names {
+            let scope = self
+                .mem
+                .get::<rt::Scope>(r)
+                .ok_or_else(|| Error::NonScope(r))?;
+            r = self.fetch(&name, scope)?
+        }
+        Ok(r)
     }
 }
