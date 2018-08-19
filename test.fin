@@ -7,5 +7,6 @@ def test
 
 def main
     test
-    rim:print (Cons test test)
+    let lst = Cons test test
+    rim:print lst
     test

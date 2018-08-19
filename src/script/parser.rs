@@ -34,7 +34,9 @@ enum TokenKind {
     Indent,
     Dedent,
     Def,
+    Let,
     Colon,
+    Equal,
     Arrow,
     LeftParen,
     RightParen,
@@ -127,6 +129,7 @@ where
             let s = self.read_while(char::is_alphanumeric);
             match s.as_ref() {
                 "def" => TokenKind::Def,
+                "let" => TokenKind::Let,
                 _ => TokenKind::Id(s),
             }
         } else {
@@ -134,6 +137,7 @@ where
             let next = self.source.peek().cloned();
             match (ch, next) {
                 (':', _) => TokenKind::Colon,
+                ('=', _) => TokenKind::Equal,
                 ('(', _) => TokenKind::LeftParen,
                 (')', _) => TokenKind::RightParen,
                 ('-', Some('>')) => {
@@ -283,28 +287,40 @@ where
     }
 
     fn block(&mut self) -> Result<Expr> {
-        let expr = self.expr()?;
-
-        let name = if self.consume(&TokenKind::Arrow)? {
+        let kind = if self.consume(&TokenKind::Let)? {
             let name = self.id()?;
+            self.expect(&TokenKind::Equal)?;
+            let value = self.expr()?;
             self.expect(&TokenKind::Newline)?;
-            name
-        } else if self.consume(&TokenKind::Newline)? {
-            "_".to_string()
+
+            let next = self.block()?;
+
+            let func = Expr {
+                kind: ExprKind::Func(name, Box::new(next)),
+            };
+            ExprKind::Apply(Box::new(func), Box::new(value))
         } else {
-            return Ok(expr);
+            let value = self.expr()?;
+
+            let name = if self.consume(&TokenKind::Arrow)? {
+                let name = self.id()?;
+                self.expect(&TokenKind::Newline)?;
+                name
+            } else if self.consume(&TokenKind::Newline)? {
+                "_".to_string()
+            } else {
+                return Ok(value);
+            };
+
+            let next = self.block()?;
+
+            let func = Expr {
+                kind: ExprKind::Func(name, Box::new(next)),
+            };
+            ExprKind::Seq(Box::new(value), Box::new(func))
         };
 
-        let next = self.block()?;
-
-        let func = Expr {
-            kind: ExprKind::Func(name, Box::new(next)),
-        };
-        let ret = Expr {
-            kind: ExprKind::Seq(Box::new(expr), Box::new(func)),
-        };
-
-        Ok(ret)
+        Ok(Expr { kind })
     }
 
     fn expr(&mut self) -> Result<Expr> {
