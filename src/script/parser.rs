@@ -257,6 +257,7 @@ where
 
         let kind = if name.chars().next().expect("empty id").is_uppercase() {
             let fields = self.end_by(Self::id, Some(&TokenKind::Newline))?;
+            self.expect(&TokenKind::Newline)?;
 
             let tp = Type { fields };
 

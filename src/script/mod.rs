@@ -111,6 +111,15 @@ impl Runtime {
 
             self.eval(&func.body, env)
         } else if let Some(mut var) = self.mem.get::<rt::Struct>(func).cloned() {
+            {
+                let tp = self
+                    .mem
+                    .get::<rt::Type>(var.tp)
+                    .expect("struct type not type");
+                if var.fields.len() == tp.fields.len() {
+                    return Err(Error::NonCallable(func));
+                }
+            }
             var.fields.push(arg);
             Ok(self.mem.alloc(var))
         } else {

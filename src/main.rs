@@ -1,8 +1,8 @@
 extern crate libc;
 
-mod editor;
+// mod editor;
 mod lib;
-mod ncurses;
+// mod ncurses;
 mod script;
 
 use script::rt;
@@ -124,16 +124,16 @@ impl Rim {
     }
 }
 
-fn run() -> ncurses::Result<()> {
-    ncurses::initscr()?;
-    ncurses::cbreak()?;
-    ncurses::keypad(true)?;
-    ncurses::noecho()?;
+// fn run() -> ncurses::Result<()> {
+//     ncurses::initscr()?;
+//     ncurses::cbreak()?;
+//     ncurses::keypad(true)?;
+//     ncurses::noecho()?;
 
-    ncurses::getch()?;
+//     ncurses::getch()?;
 
-    ncurses::endwin()
-}
+//     ncurses::endwin()
+// }
 
 fn main() {
     let mut rim = Rim::new();
@@ -144,5 +144,4 @@ fn main() {
             println!("failed to run: {:?}", err);
         }
     }
-    run().expect("ncurses error");
 }
