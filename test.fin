@@ -1,14 +1,21 @@
 def Cons head tail
 def Null
 
+def K value
+def E error
+
 def head lst = match lst
-    (Null) Null
-    (Cons a _) a
+    (Cons a _) | K a
+    _          | E ()
+
+def unwrap val =
+    let (K value) = val
+    value
 
 def main =
     let test =
         rim:version -> v
         rim:print v
     let lst = Cons test Null
-    head lst
+    unwrap (head lst)
     rim:print lst

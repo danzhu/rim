@@ -40,6 +40,7 @@ enum TokenKind {
     Colon,
     Equal,
     Arrow,
+    Bar,
     LeftParen,
     RightParen,
     Id(String),
@@ -149,6 +150,7 @@ where
             match (ch, next) {
                 (':', _) => TokenKind::Colon,
                 ('=', _) => TokenKind::Equal,
+                ('|', _) => TokenKind::Bar,
                 ('(', _) => TokenKind::LeftParen,
                 (')', _) => TokenKind::RightParen,
                 ('-', Some('>')) => {
@@ -386,7 +388,13 @@ where
             }
             TokenKind::LeftParen => {
                 self.ignore();
-                let expr = self.expr()?;
+                let expr = if self.matches(&TokenKind::RightParen)? {
+                    Expr {
+                        kind: ExprKind::Unit,
+                    }
+                } else {
+                    self.expr()?
+                };
                 self.expect(&TokenKind::RightParen)?;
                 expr
             }
@@ -406,6 +414,7 @@ where
 
     fn arm(&mut self) -> Result<Arm> {
         let pattern = self.pattern()?;
+        self.expect(&TokenKind::Bar)?;
         let value = self.expr()?;
         Ok(Arm { pattern, value })
     }
