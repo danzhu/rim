@@ -1,18 +1,21 @@
-mod ast;
-mod parser;
+pub mod ast;
+pub mod parser;
 pub mod rt;
+pub mod tp;
 
+use self::rt::{Memory, Ref};
+use self::tp::{Func, Native, Scope, Seq, Struct, Type};
 use std::{fs, io, path, result};
 
 #[derive(Debug)]
 pub enum Error {
     Io(io::Error),
     Parser(parser::Error),
-    NonCallable(rt::Ref),
-    NonScope(rt::Ref),
-    NonStruct(rt::Ref),
-    NoMember(rt::Scope, String),
-    PatternFail(rt::Ref),
+    NonCallable(Ref),
+    NonScope(Ref),
+    NonStruct(Ref),
+    NoMember(Scope, String),
+    PatternFail(Ref),
 }
 
 impl From<io::Error> for Error {
@@ -31,7 +34,7 @@ pub type Result<T> = result::Result<T, Error>;
 
 #[derive(Default)]
 pub struct Runtime {
-    mem: rt::Memory,
+    mem: Memory,
 }
 
 impl Runtime {
@@ -39,27 +42,27 @@ impl Runtime {
         Default::default()
     }
 
-    pub fn memory(&self) -> &rt::Memory {
+    pub fn memory(&self) -> &Memory {
         &self.mem
     }
 
-    pub fn memory_mut(&mut self) -> &mut rt::Memory {
+    pub fn memory_mut(&mut self) -> &mut Memory {
         &mut self.mem
     }
 
-    pub fn load(&mut self, content: &str, env: rt::Ref) -> Result<()> {
+    pub fn load(&mut self, content: &str, env: Ref) -> Result<()> {
         let decls = parser::parse(&content)?;
 
         for decl in decls {
             let r = match decl.kind {
                 ast::DeclKind::Type(tp) => {
-                    let tp = rt::Type {
+                    let tp = Type {
                         name: decl.name.clone(),
                         fields: tp.fields,
                     };
                     let tp = self.mem.alloc(tp);
 
-                    let st = rt::Struct {
+                    let st = Struct {
                         tp,
                         fields: Vec::new(),
                     };
@@ -68,16 +71,13 @@ impl Runtime {
                 ast::DeclKind::Bind(expr) => self.eval(&expr, env)?,
             };
 
-            let scope = self
-                .mem
-                .get_mut::<rt::Scope>(env)
-                .expect("load env not scope");
+            let scope = self.mem.get_mut::<Scope>(env).expect("load env not scope");
             scope.insert(decl.name, r);
         }
         Ok(())
     }
 
-    pub fn load_file<P>(&mut self, path: P, env: rt::Ref) -> Result<()>
+    pub fn load_file<P>(&mut self, path: P, env: Ref) -> Result<()>
     where
         P: AsRef<path::Path>,
     {
@@ -85,37 +85,31 @@ impl Runtime {
         self.load(&content, env)
     }
 
-    pub fn fetch(&self, name: &str, scope: &rt::Scope) -> Result<rt::Ref> {
+    pub fn fetch(&self, name: &str, scope: &Scope) -> Result<Ref> {
         if let Some(r) = scope.get(name) {
             Ok(r)
         } else if let Some(p) = scope.parent() {
-            let p = self
-                .mem
-                .get::<rt::Scope>(p)
-                .expect("scope parent not scope");
+            let p = self.mem.get::<Scope>(p).expect("scope parent not scope");
             self.fetch(name, p)
         } else {
             Err(Error::NoMember(scope.clone(), name.to_string()))
         }
     }
 
-    pub fn call(&mut self, func: rt::Ref, arg: rt::Ref) -> Result<rt::Ref> {
-        if let Some(native) = self.mem.get::<rt::Native>(func).cloned() {
+    pub fn call(&mut self, func: Ref, arg: Ref) -> Result<Ref> {
+        if let Some(native) = self.mem.get::<Native>(func).cloned() {
             Ok(native.call(&mut self.mem, arg))
-        } else if let Some(func) = self.mem.get::<rt::Func>(func).cloned() {
-            let mut scope = rt::Scope::from(func.env);
+        } else if let Some(func) = self.mem.get::<Func>(func).cloned() {
+            let mut scope = Scope::from(func.env);
             if !self.pattern(&func.param, arg, func.env, &mut scope)? {
                 return Err(Error::PatternFail(arg));
             }
             let env = self.mem.alloc(scope);
 
             self.eval(&func.body, env)
-        } else if let Some(mut var) = self.mem.get::<rt::Struct>(func).cloned() {
+        } else if let Some(mut var) = self.mem.get::<Struct>(func).cloned() {
             {
-                let tp = self
-                    .mem
-                    .get::<rt::Type>(var.tp)
-                    .expect("struct type not type");
+                let tp = self.mem.get::<Type>(var.tp).expect("struct type not type");
                 if var.fields.len() == tp.fields.len() {
                     return Err(Error::NonCallable(func));
                 }
@@ -127,7 +121,7 @@ impl Runtime {
         }
     }
 
-    pub fn eval(&mut self, expr: &ast::Expr, env: rt::Ref) -> Result<rt::Ref> {
+    pub fn eval(&mut self, expr: &ast::Expr, env: Ref) -> Result<Ref> {
         match &expr.kind {
             ast::ExprKind::Bind(bind) => self.get_bind(bind, env),
             ast::ExprKind::Apply(func, arg) => {
@@ -138,17 +132,17 @@ impl Runtime {
             ast::ExprKind::Func(param, body) => {
                 let param = param.clone();
                 let body = (**body).clone();
-                Ok(self.mem.alloc(rt::Func { param, body, env }))
+                Ok(self.mem.alloc(Func { param, body, env }))
             }
             ast::ExprKind::Seq(expr, next) => {
                 let task = self.eval(&expr, env)?;
                 let next = self.eval(&next, env)?;
-                Ok(self.mem.alloc(rt::Seq { task, next }))
+                Ok(self.mem.alloc(Seq { task, next }))
             }
             ast::ExprKind::Match(expr, arms) => {
                 let val = self.eval(&expr, env)?;
                 for arm in arms.iter() {
-                    let mut scope = rt::Scope::from(env);
+                    let mut scope = Scope::from(env);
                     if self.pattern(&arm.pattern, val, env, &mut scope)? {
                         let env = self.mem.alloc(scope);
                         return self.eval(&arm.value, env);
@@ -159,24 +153,18 @@ impl Runtime {
         }
     }
 
-    fn pattern(
-        &self,
-        pat: &ast::Pattern,
-        val: rt::Ref,
-        env: rt::Ref,
-        scope: &mut rt::Scope,
-    ) -> Result<bool> {
+    fn pattern(&self, pat: &ast::Pattern, val: Ref, env: Ref, scope: &mut Scope) -> Result<bool> {
         match &pat.kind {
             ast::PatternKind::Bind(name) => scope.insert(name.clone(), val),
             ast::PatternKind::Struct(tp, fields) => {
                 let tp = self.get_bind(tp, env)?;
                 let tp = self
                     .mem
-                    .get::<rt::Struct>(tp)
+                    .get::<Struct>(tp)
                     .ok_or_else(|| Error::NonStruct(tp))?;
                 let val = self
                     .mem
-                    .get::<rt::Struct>(val)
+                    .get::<Struct>(val)
                     .ok_or_else(|| Error::NonStruct(val))?;
 
                 if tp.tp != val.tp {
@@ -194,13 +182,10 @@ impl Runtime {
         Ok(true)
     }
 
-    fn get_bind(&self, bind: &ast::Bind, env: rt::Ref) -> Result<rt::Ref> {
+    fn get_bind(&self, bind: &ast::Bind, env: Ref) -> Result<Ref> {
         let mut r = env;
         for name in &bind.names {
-            let scope = self
-                .mem
-                .get::<rt::Scope>(r)
-                .ok_or_else(|| Error::NonScope(r))?;
+            let scope = self.mem.get::<Scope>(r).ok_or_else(|| Error::NonScope(r))?;
             r = self.fetch(&name, scope)?
         }
         Ok(r)

@@ -5,13 +5,14 @@ mod lib;
 // mod ncurses;
 mod script;
 
-use script::rt;
+use script::rt::{Gc, Ref, Value};
+use script::tp::{Native, Scope, Seq};
 use std::result;
 
 #[derive(Debug)]
 pub enum Error {
     Memory(script::Error),
-    NotTask(rt::Ref),
+    NotTask(Ref),
 }
 
 impl From<script::Error> for Error {
@@ -25,11 +26,11 @@ pub type Result<T> = result::Result<T, Error>;
 #[derive(Clone, Debug)]
 pub enum Task {
     Version,
-    Print(rt::Ref),
+    Print(Ref),
 }
 
-impl rt::Value for Task {
-    fn mark_rec(&self, gc: &mut rt::Gc) {
+impl Value for Task {
+    fn mark_rec(&self, gc: &mut Gc) {
         match self {
             Task::Version => {}
             Task::Print(r) => gc.mark(*r),
@@ -39,7 +40,7 @@ impl rt::Value for Task {
 
 pub struct Rim {
     rt: script::Runtime,
-    root: rt::Ref,
+    root: Ref,
 }
 
 impl Rim {
@@ -50,15 +51,15 @@ impl Rim {
             let mut mem = rt.memory_mut();
             mem.debug(true);
 
-            let mut host = rt::Scope::new();
+            let mut host = Scope::new();
             host.insert("version", mem.alloc(Task::Version));
             host.insert(
                 "print",
-                mem.alloc(rt::Native::new(|mem, v| mem.alloc(Task::Print(v)))),
+                mem.alloc(Native::new(|mem, v| mem.alloc(Task::Print(v)))),
             );
             let host = mem.alloc(host);
 
-            let mut root = rt::Scope::new();
+            let mut root = Scope::new();
             root.insert("rim", host);
             mem.alloc(root)
         };
@@ -73,7 +74,7 @@ impl Rim {
         let mut conts = Vec::new();
 
         loop {
-            while let Some(seq) = self.rt.memory().get::<rt::Seq>(val) {
+            while let Some(seq) = self.rt.memory().get::<Seq>(val) {
                 conts.push(seq.next);
                 val = seq.task;
             }
@@ -100,7 +101,7 @@ impl Rim {
             val = self.rt.call(func, arg)?;
 
             let result = {
-                let mut gc = rt::Gc::new(self.rt.memory());
+                let mut gc = Gc::new(self.rt.memory());
                 gc.mark(self.root);
                 gc.mark(val);
                 for &cont in &conts {
@@ -116,10 +117,10 @@ impl Rim {
         Ok(())
     }
 
-    fn root(&self) -> &rt::Scope {
+    fn root(&self) -> &Scope {
         self.rt
             .memory()
-            .get::<rt::Scope>(self.root)
+            .get::<Scope>(self.root)
             .expect("root not scope")
     }
 }
