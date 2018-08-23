@@ -15,6 +15,7 @@ pub fn parse(s: &str) -> Result<Vec<Decl>> {
     // for token in tokens {
     //     println!("{:?}", token);
     // }
+    // let tokens = Lexer::new(s.chars());
     let decls = Parser::new(tokens).parse()?;
     // for decl in decls {
     //     println!("{:?}", decl);
@@ -52,6 +53,7 @@ where
     pos: Pos,
     indents: Vec<i32>,
     pending_dedents: usize,
+    pending_eol: bool,
 }
 
 impl<Iter> Lexer<Iter>
@@ -64,6 +66,7 @@ where
             pos: Pos::new(),
             indents: vec![0],
             pending_dedents: 0,
+            pending_eol: false,
         }
     }
 
@@ -95,6 +98,10 @@ where
         }
         s
     }
+
+    fn token(&self, pos: Pos, kind: TokenKind) -> Option<Result<Token>> {
+        Some(Ok(Token { pos, kind }))
+    }
 }
 
 impl<Iter> Iterator for Lexer<Iter>
@@ -106,12 +113,14 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         let pos = self.pos;
 
+        if self.pending_eol {
+            self.pending_eol = false;
+            return self.token(pos, TokenKind::Newline);
+        }
         if self.pending_dedents > 0 {
             self.pending_dedents -= 1;
-            return Some(Ok(Token {
-                pos,
-                kind: TokenKind::Dedent,
-            }));
+            self.pending_eol = true;
+            return self.token(pos, TokenKind::Dedent);
         }
 
         let ch = match self.source.peek() {
@@ -172,7 +181,7 @@ where
             }
         };
 
-        Some(Ok(Token { pos, kind }))
+        self.token(pos, kind)
     }
 }
 
@@ -209,11 +218,18 @@ where
         }
     }
 
+    fn ignore(&mut self) {
+        self.next().expect("peek").expect("peek");
+    }
+
+    fn matches(&mut self, kind: &TokenKind) -> Result<bool> {
+        Ok(self.peek()?.map_or(false, |t| t.kind == *kind))
+    }
+
     fn consume(&mut self, kind: &TokenKind) -> Result<bool> {
-        let res = self.peek()?.map_or(false, |t| t.kind == *kind);
+        let res = self.matches(kind)?;
         if res {
-            self.next()
-                .expect("peek() returns Ok but next() returns Err");
+            self.ignore();
         }
         Ok(res)
     }
@@ -263,17 +279,14 @@ where
 
         let kind = if name.chars().next().expect("empty id").is_uppercase() {
             let fields = self.end_by(Self::id, Some(&TokenKind::Newline))?;
-            self.expect(&TokenKind::Newline)?;
 
             let tp = Type { fields };
 
             DeclKind::Type(tp)
         } else {
-            let params = self.end_by(Self::pattern, Some(&TokenKind::Indent))?;
-
-            self.expect(&TokenKind::Indent)?;
-            let body = self.block()?;
-            self.expect(&TokenKind::Dedent)?;
+            let params = self.end_by(Self::pattern, Some(&TokenKind::Equal))?;
+            self.expect(&TokenKind::Equal)?;
+            let body = self.expr()?;
 
             let mut value = body;
             for param in params.into_iter().rev() {
@@ -284,6 +297,8 @@ where
 
             DeclKind::Bind(value)
         };
+
+        self.expect(&TokenKind::Newline)?;
 
         Ok(Decl { name, kind })
     }
@@ -305,9 +320,9 @@ where
             let value = self.expr()?;
 
             let pat = if self.consume(&TokenKind::Arrow)? {
-                let name = self.pattern()?;
+                let pat = self.pattern()?;
                 self.expect(&TokenKind::Newline)?;
-                name
+                pat
             } else if self.consume(&TokenKind::Newline)? {
                 Pattern {
                     kind: PatternKind::Ignore,
@@ -360,7 +375,7 @@ where
                 }
             }
             TokenKind::Match => {
-                self.next().expect("peek");
+                self.ignore();
                 let value = self.expr()?;
                 self.expect(&TokenKind::Indent)?;
                 let arms = self.sep_by(Self::arm, &TokenKind::Newline)?;
@@ -370,17 +385,20 @@ where
                 }
             }
             TokenKind::LeftParen => {
-                self.next().expect("peek");
+                self.ignore();
                 let expr = self.expr()?;
                 self.expect(&TokenKind::RightParen)?;
                 expr
             }
+            TokenKind::Indent => {
+                self.ignore();
+                let expr = self.block()?;
+                self.expect(&TokenKind::Dedent)?;
+                expr
+            }
             _ => {
-                return Err(Error::Expecting(
-                    "value".to_string(),
-                    self.next()
-                        .expect("next returns None after peek returns Some"),
-                ))
+                let token = self.next().expect("peek");
+                return Err(Error::Expecting("value".to_string(), token));
             }
         };
         Ok(expr)

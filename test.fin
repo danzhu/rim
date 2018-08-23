@@ -1,16 +1,14 @@
 def Cons head tail
 def Null
 
-def head lst
-    match lst
-        (Null) Null
-        (Cons a _) a
+def head lst = match lst
+    (Null) Null
+    (Cons a _) a
 
-def test
-    rim:version -> v
-    rim:print v
-
-def main
+def main =
+    let test =
+        rim:version -> v
+        rim:print v
     let lst = Cons test Null
     head lst
     rim:print lst
