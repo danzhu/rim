@@ -1,4 +1,4 @@
-use super::ast::{Bind, Decl, DeclKind, Expr, ExprKind, Pattern, PatternKind, Type};
+use super::ast::{Arm, Bind, Decl, DeclKind, Expr, ExprKind, Pattern, PatternKind, Type};
 use lib::Pos;
 use std::{iter, result};
 
@@ -35,6 +35,7 @@ enum TokenKind {
     Dedent,
     Def,
     Let,
+    Match,
     Colon,
     Equal,
     Arrow,
@@ -130,6 +131,7 @@ where
             match s.as_ref() {
                 "def" => TokenKind::Def,
                 "let" => TokenKind::Let,
+                "match" => TokenKind::Match,
                 _ => TokenKind::Id(s),
             }
         } else {
@@ -357,15 +359,37 @@ where
                     kind: ExprKind::Bind(bind),
                 }
             }
+            TokenKind::Match => {
+                self.next().expect("peek");
+                let value = self.expr()?;
+                self.expect(&TokenKind::Indent)?;
+                let arms = self.sep_by(Self::arm, &TokenKind::Newline)?;
+                self.expect(&TokenKind::Dedent)?;
+                Expr {
+                    kind: ExprKind::Match(Box::new(value), arms),
+                }
+            }
             TokenKind::LeftParen => {
-                self.next()?;
+                self.next().expect("peek");
                 let expr = self.expr()?;
                 self.expect(&TokenKind::RightParen)?;
                 expr
             }
-            _ => return Err(Error::Expecting("value".to_string(), self.next()?)),
+            _ => {
+                return Err(Error::Expecting(
+                    "value".to_string(),
+                    self.next()
+                        .expect("next returns None after peek returns Some"),
+                ))
+            }
         };
         Ok(expr)
+    }
+
+    fn arm(&mut self) -> Result<Arm> {
+        let pattern = self.pattern()?;
+        let value = self.expr()?;
+        Ok(Arm { pattern, value })
     }
 
     fn pattern(&mut self) -> Result<Pattern> {

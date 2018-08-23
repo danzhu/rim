@@ -53,6 +53,13 @@ impl fmt::Display for Expr {
             ExprKind::Apply(func, arg) => write!(f, "({} {})", func, arg),
             ExprKind::Func(param, body) => write!(f, "/{} {}", param, body),
             ExprKind::Seq(task, next) => write!(f, "({} > {})", task, next),
+            ExprKind::Match(expr, arms) => {
+                write!(f, "({}", expr)?;
+                for arm in arms {
+                    write!(f, " | {}", arm)?;
+                }
+                write!(f, ")")
+            }
         }
     }
 }
@@ -63,6 +70,19 @@ pub enum ExprKind {
     Apply(Box<Expr>, Box<Expr>),
     Func(Pattern, Box<Expr>),
     Seq(Box<Expr>, Box<Expr>),
+    Match(Box<Expr>, Vec<Arm>),
+}
+
+#[derive(Clone, Debug)]
+pub struct Arm {
+    pub pattern: Pattern,
+    pub value: Expr,
+}
+
+impl fmt::Display for Arm {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{} -> {}", self.pattern, self.value)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -73,13 +93,13 @@ pub struct Pattern {
 impl fmt::Display for Pattern {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self.kind {
-            PatternKind::Bind(name) => write!(f, "{}", name),
+            PatternKind::Bind(bind) => write!(f, "{}", bind),
             PatternKind::Struct(tp, fields) => {
-                write!(f, "{}", tp)?;
+                write!(f, "({}", tp)?;
                 for field in fields {
-                    write!(f, "{}", field)?;
+                    write!(f, " {}", field)?;
                 }
-                Ok(())
+                write!(f, ")")
             }
             PatternKind::Ignore => write!(f, "_"),
         }

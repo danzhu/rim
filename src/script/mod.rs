@@ -2,7 +2,6 @@ mod ast;
 mod parser;
 pub mod rt;
 
-use std::io::prelude::*;
 use std::{fs, io, path, result};
 
 #[derive(Debug)]
@@ -82,10 +81,7 @@ impl Runtime {
     where
         P: AsRef<path::Path>,
     {
-        let mut file = fs::File::open(path)?;
-        let mut content = String::new();
-        file.read_to_string(&mut content)?;
-
+        let content = fs::read_to_string(path)?;
         self.load(&content, env)
     }
 
@@ -148,6 +144,17 @@ impl Runtime {
                 let task = self.eval(&expr, env)?;
                 let next = self.eval(&next, env)?;
                 Ok(self.mem.alloc(rt::Seq { task, next }))
+            }
+            ast::ExprKind::Match(expr, arms) => {
+                let val = self.eval(&expr, env)?;
+                for arm in arms.iter() {
+                    let mut scope = rt::Scope::from(env);
+                    if self.pattern(&arm.pattern, val, env, &mut scope)? {
+                        let env = self.mem.alloc(scope);
+                        return self.eval(&arm.value, env);
+                    }
+                }
+                Err(Error::PatternFail(val))
             }
         }
     }

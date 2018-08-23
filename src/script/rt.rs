@@ -75,11 +75,11 @@ impl Scope {
 
 impl fmt::Debug for Scope {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Scope {:?}", self.binds)?;
+        write!(f, "Scope")?;
         if let Some(parent) = self.parent {
-            write!(f, " | {:?}", parent)?;
+            write!(f, " {:?}", parent)?;
         }
-        Ok(())
+        write!(f, " {:?}", self.binds)
     }
 }
 
@@ -139,7 +139,7 @@ pub struct Func {
 
 impl fmt::Debug for Func {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Func /{} {} | {:?}", self.param, self.body, self.env)
+        write!(f, "Func {:?} /{} {}", self.env, self.param, self.body)
     }
 }
 
