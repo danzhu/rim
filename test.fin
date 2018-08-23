@@ -1,8 +1,10 @@
-def Cons head tail
-def Null
+def List =
+    Cons head tail
+    Null
 
-def K value
-def E error
+def Res =
+    K value
+    E error
 
 def head lst = match lst
     (Cons a _) | K a

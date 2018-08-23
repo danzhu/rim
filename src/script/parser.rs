@@ -1,4 +1,4 @@
-use super::ast::{Arm, Bind, Decl, DeclKind, Expr, ExprKind, Pattern, PatternKind, Type};
+use super::ast::{Arm, Bind, Decl, DeclKind, Expr, ExprKind, Pattern, PatternKind, Type, Variant};
 use lib::Pos;
 use std::{iter, result};
 
@@ -280,14 +280,18 @@ where
         let name = self.id()?;
 
         let kind = if name.chars().next().expect("empty id").is_uppercase() {
-            let fields = self.end_by(Self::id, Some(&TokenKind::Newline))?;
+            self.expect(&TokenKind::Equal)?;
 
-            let tp = Type { fields };
+            self.expect(&TokenKind::Indent)?;
+            let variants = self.sep_by(Self::variant, &TokenKind::Newline)?;
+            self.expect(&TokenKind::Dedent)?;
+
+            let tp = Type { variants };
 
             DeclKind::Type(tp)
         } else {
             let params = self.end_by(Self::pattern, Some(&TokenKind::Equal))?;
-            self.expect(&TokenKind::Equal)?;
+            self.ignore();
             let body = self.expr()?;
 
             let mut value = body;
@@ -303,6 +307,12 @@ where
         self.expect(&TokenKind::Newline)?;
 
         Ok(Decl { name, kind })
+    }
+
+    fn variant(&mut self) -> Result<Variant> {
+        let name = self.id()?;
+        let fields = self.ids()?;
+        Ok(Variant { name, fields })
     }
 
     fn block(&mut self) -> Result<Expr> {
@@ -423,7 +433,7 @@ where
         let kind = if self.consume(&TokenKind::LeftParen)? {
             let tp = self.bind()?;
             let fields = self.end_by(Self::pattern, Some(&TokenKind::RightParen))?;
-            self.expect(&TokenKind::RightParen)?;
+            self.ignore();
             PatternKind::Struct(tp, fields)
         } else {
             let name = self.id()?;
@@ -439,6 +449,15 @@ where
     fn bind(&mut self) -> Result<Bind> {
         self.sep_by(Self::id, &TokenKind::Colon)
             .map(|names| Bind { names })
+    }
+
+    fn ids(&mut self) -> Result<Vec<String>> {
+        let mut res = Vec::new();
+        while let Some(TokenKind::Id(_)) = self.peek()?.map(|t| &t.kind) {
+            let id = self.id().expect("peek");
+            res.push(id);
+        }
+        Ok(res)
     }
 
     fn id(&mut self) -> Result<String> {

@@ -54,25 +54,32 @@ impl Runtime {
         let decls = parser::parse(&content)?;
 
         for decl in decls {
-            let r = match decl.kind {
+            match decl.kind {
                 ast::DeclKind::Type(tp) => {
-                    let tp = Type {
-                        name: decl.name.clone(),
-                        fields: tp.fields,
-                    };
-                    let tp = self.mem.alloc(tp);
+                    for var in tp.variants {
+                        let tp = Type {
+                            name: var.name.clone(),
+                            fields: var.fields,
+                        };
+                        let tp = self.mem.alloc(tp);
 
-                    let st = Struct {
-                        tp,
-                        fields: Vec::new(),
-                    };
-                    self.mem.alloc(st)
+                        let st = Struct {
+                            tp,
+                            fields: Vec::new(),
+                        };
+                        let r = self.mem.alloc(st);
+
+                        let scope = self.mem.get_mut::<Scope>(env).expect("load env not scope");
+                        scope.insert(var.name, r);
+                    }
                 }
-                ast::DeclKind::Bind(expr) => self.eval(&expr, env)?,
-            };
+                ast::DeclKind::Bind(expr) => {
+                    let r = self.eval(&expr, env)?;
 
-            let scope = self.mem.get_mut::<Scope>(env).expect("load env not scope");
-            scope.insert(decl.name, r);
+                    let scope = self.mem.get_mut::<Scope>(env).expect("load env not scope");
+                    scope.insert(decl.name, r);
+                }
+            };
         }
         Ok(())
     }

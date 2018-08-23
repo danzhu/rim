@@ -29,13 +29,29 @@ impl fmt::Display for DeclKind {
 
 #[derive(Clone, Debug)]
 pub struct Type {
-    pub fields: Vec<String>,
+    pub variants: Vec<Variant>,
 }
 
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for variant in &self.variants {
+            write!(f, "\n| {}", variant)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Variant {
+    pub name: String,
+    pub fields: Vec<String>,
+}
+
+impl fmt::Display for Variant {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.name)?;
         for field in &self.fields {
-            write!(f, "{}", field)?;
+            write!(f, " {}", field)?;
         }
         Ok(())
     }
