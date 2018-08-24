@@ -279,7 +279,7 @@ where
         self.expect(&TokenKind::Def)?;
         let name = self.id()?;
 
-        let kind = if name.chars().next().expect("empty id").is_uppercase() {
+        let kind = if is_type(&name) {
             self.expect(&TokenKind::Equal)?;
 
             self.expect(&TokenKind::Indent)?;
@@ -290,7 +290,7 @@ where
 
             DeclKind::Type(tp)
         } else {
-            let params = self.end_by(Self::pattern, Some(&TokenKind::Equal))?;
+            let params = self.end_by(Self::pattern_atom, Some(&TokenKind::Equal))?;
             self.ignore();
             let body = self.expr()?;
 
@@ -355,12 +355,27 @@ where
     }
 
     fn expr(&mut self) -> Result<Expr> {
+        let mut expr = self.factor()?;
+
+        if self.consume(&TokenKind::Match)? {
+            self.expect(&TokenKind::Indent)?;
+            let arms = self.sep_by(Self::arm, &TokenKind::Newline)?;
+            self.expect(&TokenKind::Dedent)?;
+            expr = Expr {
+                kind: ExprKind::Match(Box::new(expr), arms),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn factor(&mut self) -> Result<Expr> {
         let mut expr = self.atom()?;
 
         loop {
             if let Some(Token { kind, .. }) = self.peek()? {
                 match kind {
-                    TokenKind::Id(_) | TokenKind::LeftParen => {}
+                    TokenKind::Id(_) | TokenKind::LeftParen | TokenKind::Indent => {}
                     _ => break,
                 }
             }
@@ -384,16 +399,6 @@ where
                 let bind = self.bind()?;
                 Expr {
                     kind: ExprKind::Bind(bind),
-                }
-            }
-            TokenKind::Match => {
-                self.ignore();
-                let value = self.expr()?;
-                self.expect(&TokenKind::Indent)?;
-                let arms = self.sep_by(Self::arm, &TokenKind::Newline)?;
-                self.expect(&TokenKind::Dedent)?;
-                Expr {
-                    kind: ExprKind::Match(Box::new(value), arms),
                 }
             }
             TokenKind::LeftParen => {
@@ -430,20 +435,48 @@ where
     }
 
     fn pattern(&mut self) -> Result<Pattern> {
-        let kind = if self.consume(&TokenKind::LeftParen)? {
-            let tp = self.bind()?;
-            let fields = self.end_by(Self::pattern, Some(&TokenKind::RightParen))?;
-            self.ignore();
-            PatternKind::Struct(tp, fields)
+        let is_type = match self.peek()?.map(|t| &t.kind) {
+            Some(TokenKind::Id(name)) => is_type(name),
+            _ => false,
+        };
+
+        if is_type {
+            let tp = self.id()?;
+
+            let mut fields = Vec::new();
+            loop {
+                if let Some(Token { kind, .. }) = self.peek()? {
+                    match kind {
+                        TokenKind::Id(_) | TokenKind::LeftParen => {}
+                        _ => break,
+                    }
+                }
+
+                let pat = self.pattern_atom()?;
+                fields.push(pat);
+            }
+
+            let kind = PatternKind::Struct(tp, fields);
+            Ok(Pattern { kind })
+        } else {
+            self.pattern_atom()
+        }
+    }
+
+    fn pattern_atom(&mut self) -> Result<Pattern> {
+        if self.consume(&TokenKind::LeftParen)? {
+            let pat = self.pattern()?;
+            self.expect(&TokenKind::RightParen)?;
+            Ok(pat)
         } else {
             let name = self.id()?;
-            if name == "_" {
+            let kind = if name == "_" {
                 PatternKind::Ignore
             } else {
                 PatternKind::Bind(name)
-            }
-        };
-        Ok(Pattern { kind })
+            };
+            Ok(Pattern { kind })
+        }
     }
 
     fn bind(&mut self) -> Result<Bind> {
@@ -469,4 +502,8 @@ where
             token => Err(Error::Expecting("Id".to_string(), token)),
         }
     }
+}
+
+fn is_type(name: &str) -> bool {
+    name.chars().next().map_or(false, char::is_uppercase)
 }

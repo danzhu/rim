@@ -165,17 +165,12 @@ impl Runtime {
         match &pat.kind {
             ast::PatternKind::Bind(name) => scope.insert(name.clone(), val),
             ast::PatternKind::Struct(tp, fields) => {
-                let tp = self.get_bind(tp, env)?;
-                let tp = self
-                    .mem
-                    .get::<Struct>(tp)
-                    .ok_or_else(|| Error::NonStruct(tp))?;
                 let val = self
                     .mem
                     .get::<Struct>(val)
                     .ok_or_else(|| Error::NonStruct(val))?;
 
-                if tp.tp != val.tp {
+                if self.mem.get::<Type>(val.tp).expect("tp not type").name != *tp {
                     return Ok(false);
                 }
                 for (pat, &field) in fields.iter().zip(&val.fields) {

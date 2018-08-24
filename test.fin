@@ -6,13 +6,11 @@ def Res =
     K value
     E error
 
-def head lst = match lst
-    (Cons a _) | K a
-    _          | E ()
+def head lst = lst match
+    Cons a _ | K a
+    _        | E ()
 
-def unwrap val =
-    let (K value) = val
-    value
+def unwrap (K value) = value
 
 def main =
     let test =

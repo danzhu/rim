@@ -11,13 +11,13 @@ use std::result;
 
 #[derive(Debug)]
 pub enum Error {
-    Memory(script::Error),
+    Script(script::Error),
     NotTask(Ref),
 }
 
 impl From<script::Error> for Error {
     fn from(err: script::Error) -> Self {
-        Error::Memory(err)
+        Error::Script(err)
     }
 }
 

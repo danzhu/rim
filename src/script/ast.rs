@@ -127,7 +127,7 @@ impl fmt::Display for Pattern {
 #[derive(Clone, Debug)]
 pub enum PatternKind {
     Bind(String),
-    Struct(Bind, Vec<Pattern>),
+    Struct(String, Vec<Pattern>),
     Ignore,
 }
 
