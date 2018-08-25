@@ -12,10 +12,14 @@ def head lst = lst match
 
 def unwrap (K value) = value
 
+def id x = x
+
 def main =
     let test =
         rim:version -> v
         rim:print v
+
     let lst = Cons test Null
     unwrap (head lst)
-    rim:print lst
+    id
+        rim:print lst

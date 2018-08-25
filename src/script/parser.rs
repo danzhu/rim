@@ -4,7 +4,8 @@ use std::{iter, result};
 
 #[derive(Clone, Debug)]
 pub enum Error {
-    UnknownChar(char),
+    UnknownChar(Pos, char),
+    PartialDedent(Pos),
     Expecting(String, Option<Token>),
 }
 
@@ -52,7 +53,7 @@ where
 {
     source: iter::Peekable<Iter>,
     pos: Pos,
-    indents: Vec<i32>,
+    indents: Vec<usize>,
     pending_dedents: usize,
     pending_eol: bool,
 }
@@ -65,22 +66,33 @@ where
         Lexer {
             source: source.peekable(),
             pos: Pos::new(),
-            indents: vec![0],
+            indents: Vec::new(),
             pending_dedents: 0,
             pending_eol: false,
         }
     }
 
+    fn indent(&self) -> usize {
+        self.indents.last().cloned().unwrap_or(0)
+    }
+
+    fn peek(&mut self) -> Option<char> {
+        self.source.peek().cloned()
+    }
+
     fn read(&mut self) -> Option<char> {
-        self.source.next().map(|ch| {
-            if ch == '\n' {
-                self.pos.line += 1;
-                self.pos.column = 1;
-            } else {
-                self.pos.column += 1;
-            }
-            ch
-        })
+        let ch = self.source.next()?;
+        if ch == '\n' {
+            self.pos.line += 1;
+            self.pos.column = 1;
+        } else {
+            self.pos.column += 1;
+        }
+        Some(ch)
+    }
+
+    fn ignore(&mut self) {
+        self.read().expect("peek");
     }
 
     fn read_while<F>(&mut self, f: F) -> String
@@ -88,20 +100,10 @@ where
         F: Fn(char) -> bool,
     {
         let mut s = String::new();
-        loop {
-            match self.source.peek() {
-                Some(&c) if f(c) => {
-                    s.push(c);
-                    self.read();
-                }
-                _ => break,
-            }
+        while self.peek().map_or(false, &f) {
+            s.push(self.read().expect("peek"));
         }
         s
-    }
-
-    fn token(&self, pos: Pos, kind: TokenKind) -> Option<Result<Token>> {
-        Some(Ok(Token { pos, kind }))
     }
 }
 
@@ -113,27 +115,28 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         let pos = self.pos;
+        let token = move |kind| Some(Ok(Token { pos, kind }));
 
         if self.pending_eol {
             self.pending_eol = false;
-            return self.token(pos, TokenKind::Newline);
+            return token(TokenKind::Newline);
         }
         if self.pending_dedents > 0 {
             self.pending_dedents -= 1;
-            self.pending_eol = true;
-            return self.token(pos, TokenKind::Dedent);
+            self.pending_eol = self.pending_dedents == 0;
+            return token(TokenKind::Dedent);
         }
 
-        let ch = match self.source.peek() {
+        let ch = match self.peek() {
             None => {
-                self.pending_dedents = self.indents.len() - 1;
+                self.pending_dedents = self.indents.len();
                 return if self.pending_dedents > 0 {
                     self.next()
                 } else {
                     None
                 };
             }
-            Some(&ch) => ch,
+            Some(ch) => ch,
         };
 
         let kind = if ch.is_alphabetic() || ch == '_' {
@@ -145,8 +148,8 @@ where
                 _ => TokenKind::Id(s),
             }
         } else {
-            self.read();
-            let next = self.source.peek().cloned();
+            self.ignore();
+            let next = self.peek();
             match (ch, next) {
                 (':', _) => TokenKind::Colon,
                 ('=', _) => TokenKind::Equal,
@@ -154,21 +157,28 @@ where
                 ('(', _) => TokenKind::LeftParen,
                 (')', _) => TokenKind::RightParen,
                 ('-', Some('>')) => {
-                    self.read().unwrap();
+                    self.ignore();
                     TokenKind::Arrow
                 }
                 ('\n', _) => {
                     let mut ind = 0;
-                    while let Some(&' ') = self.source.peek() {
+                    while self.peek() == Some(' ') {
                         ind += 1;
-                        self.read();
+                        self.ignore();
                     }
 
-                    let last = self.indents.last().cloned().unwrap_or(-1);
+                    if self.peek() == Some('\n') {
+                        return self.next();
+                    }
+
+                    let last = self.indent();
                     if ind < last {
-                        while self.indents.last().cloned().unwrap_or(-1) > ind {
-                            self.indents.pop();
+                        while ind < self.indent() {
+                            self.indents.pop().expect("last");
                             self.pending_dedents += 1;
+                        }
+                        if ind != self.indent() {
+                            return Some(Err(Error::PartialDedent(pos)));
                         }
                         return self.next();
                     } else if ind > last {
@@ -179,11 +189,11 @@ where
                     }
                 }
                 _ if ch.is_whitespace() => return self.next(),
-                _ => return Some(Err(Error::UnknownChar(ch))),
+                _ => return Some(Err(Error::UnknownChar(pos, ch))),
             }
         };
 
-        self.token(pos, kind)
+        token(kind)
     }
 }
 
@@ -274,8 +284,6 @@ where
     }
 
     fn decl(&mut self) -> Result<Decl> {
-        while self.consume(&TokenKind::Newline)? {}
-
         self.expect(&TokenKind::Def)?;
         let name = self.id()?;
 
