@@ -242,9 +242,9 @@ where
         }
     }
 
-    fn peek(&mut self) -> Result<Option<&Token>> {
+    fn peek(&mut self) -> Result<Option<&TokenKind>> {
         match self.source.peek() {
-            Some(Ok(token)) => Ok(Some(token)),
+            Some(Ok(token)) => Ok(Some(&token.kind)),
             Some(Err(err)) => Err(err.clone()),
             None => Ok(None),
         }
@@ -266,7 +266,7 @@ where
     where
         F: FnOnce(&TokenKind) -> bool,
     {
-        Ok(self.peek()?.map_or(false, |t| f(&t.kind)))
+        Ok(self.peek()?.map_or(false, f))
     }
 
     fn matches(&mut self, kind: &TokenKind) -> Result<bool> {
@@ -281,13 +281,19 @@ where
         Ok(res)
     }
 
+    fn err<Str>(&mut self, exp: Str) -> Error
+    where
+        Str: Into<String>,
+    {
+        let got = self.next().expect("peek");
+        Error::Expecting(exp.into(), got)
+    }
+
     fn expect(&mut self, kind: &TokenKind) -> Result<()> {
         if self.consume(kind)? {
             Ok(())
         } else {
-            let expect = format!("{:?}", kind);
-            let got = self.next().expect("peek");
-            Err(Error::Expecting(expect, got))
+            Err(self.err(format!("{:?}", kind)))
         }
     }
 
@@ -296,7 +302,7 @@ where
         F: Fn(&mut Self) -> Result<T>,
     {
         let mut res = Vec::new();
-        while self.peek()?.map(|t| &t.kind) != end {
+        while self.peek()? != end {
             res.push(f(self)?);
         }
         Ok(res)
@@ -359,7 +365,7 @@ where
 
     fn block(&mut self) -> Result<Expr> {
         let kind = if self.consume(&TokenKind::Let)? {
-            let pat = self.pattern(true)?;
+            let pat = self.pattern()?;
             self.expect(&TokenKind::Equal)?;
             let value = self.expr()?;
             self.expect(&TokenKind::Newline)?;
@@ -373,10 +379,10 @@ where
         } else {
             let value = self.expr()?;
 
-            let pat = match self.peek()?.map(|t| &t.kind) {
+            let pat = match self.peek()? {
                 Some(TokenKind::Arrow) => {
                     self.ignore();
-                    let pat = self.pattern(true)?;
+                    let pat = self.pattern()?;
                     self.expect(&TokenKind::Newline)?;
                     pat
                 }
@@ -401,17 +407,9 @@ where
     }
 
     fn expr(&mut self) -> Result<Expr> {
-        let mut expr = self.atom()?;
+        let mut expr = self.atom()?.ok_or_else(|| self.err("value"))?;
 
-        while self.satisfy(|k| match k {
-            TokenKind::String(_)
-            | TokenKind::Id(_)
-            | TokenKind::LeftParen
-            | TokenKind::Indent
-            | TokenKind::Which => true,
-            _ => false,
-        })? {
-            let val = self.atom()?;
+        while let Some(val) = self.atom()? {
             expr = Expr {
                 kind: ExprKind::Apply(Box::new(expr), Box::new(val)),
             };
@@ -420,8 +418,8 @@ where
         Ok(expr)
     }
 
-    fn atom(&mut self) -> Result<Expr> {
-        let expr = match self.peek()?.map(|t| &t.kind) {
+    fn atom(&mut self) -> Result<Option<Expr>> {
+        let expr = match self.peek()? {
             Some(TokenKind::String(_)) => {
                 let s = match self.next().expect("peek").expect("peek").kind {
                     TokenKind::String(s) => s,
@@ -467,35 +465,32 @@ where
                     kind: ExprKind::Match(Box::new(expr), arms),
                 }
             }
-            _ => {
-                let token = self.next().expect("peek");
-                return Err(Error::Expecting("value".to_string(), token));
-            }
+            _ => return Ok(None),
         };
-        Ok(expr)
+        Ok(Some(expr))
     }
 
     fn arm(&mut self) -> Result<Arm> {
-        let pattern = self.pattern(true)?;
+        let pattern = self.pattern()?;
         self.expect(&TokenKind::Bar)?;
         let value = self.expr()?;
         Ok(Arm { pattern, value })
     }
 
+    fn pattern(&mut self) -> Result<Pattern> {
+        self.pattern_imp(true)?.ok_or_else(|| self.err("pattern"))
+    }
+
     fn patterns(&mut self) -> Result<Vec<Pattern>> {
         let mut pats = Vec::new();
-        while self.satisfy(|k| match k {
-            TokenKind::Id(_) | TokenKind::LeftParen => true,
-            _ => false,
-        })? {
-            let pat = self.pattern(false)?;
+        while let Some(pat) = self.pattern_imp(false)? {
             pats.push(pat);
         }
         Ok(pats)
     }
 
-    fn pattern(&mut self, multi: bool) -> Result<Pattern> {
-        let pat = match self.peek()?.map(|t| &t.kind) {
+    fn pattern_imp(&mut self, multi: bool) -> Result<Option<Pattern>> {
+        let pat = match self.peek()? {
             Some(TokenKind::Id(_)) => {
                 let bind = self.bind()?;
                 let kind = if is_type(bind.names.last().expect("empty bind")) {
@@ -516,16 +511,13 @@ where
             }
             Some(TokenKind::LeftParen) => {
                 self.ignore();
-                let pat = self.pattern(true)?;
+                let pat = self.pattern()?;
                 self.expect(&TokenKind::RightParen)?;
                 pat
             }
-            _ => {
-                let token = self.next().expect("peek");
-                return Err(Error::Expecting("pattern".to_string(), token));
-            }
+            _ => return Ok(None),
         };
-        Ok(pat)
+        Ok(Some(pat))
     }
 
     fn bind(&mut self) -> Result<Bind> {
@@ -535,7 +527,7 @@ where
 
     fn ids(&mut self) -> Result<Vec<String>> {
         let mut res = Vec::new();
-        while let Some(TokenKind::Id(_)) = self.peek()?.map(|t| &t.kind) {
+        while let Some(TokenKind::Id(_)) = self.peek()? {
             let id = self.id().expect("peek");
             res.push(id);
         }
