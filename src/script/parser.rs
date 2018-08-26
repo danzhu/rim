@@ -234,8 +234,15 @@ where
         self.next().expect("peek").expect("peek");
     }
 
+    fn satisfy<F>(&mut self, f: F) -> Result<bool>
+    where
+        F: FnOnce(&TokenKind) -> bool,
+    {
+        Ok(self.peek()?.map_or(false, |t| f(&t.kind)))
+    }
+
     fn matches(&mut self, kind: &TokenKind) -> Result<bool> {
-        Ok(self.peek()?.map_or(false, |t| t.kind == *kind))
+        self.satisfy(|k| k == kind)
     }
 
     fn consume(&mut self, kind: &TokenKind) -> Result<bool> {
@@ -250,10 +257,9 @@ where
         if self.consume(kind)? {
             Ok(())
         } else {
-            Err(Error::Expecting(
-                format!("{:?}", kind),
-                self.peek()?.cloned(),
-            ))
+            let expect = format!("{:?}", kind);
+            let got = self.next().expect("peek");
+            Err(Error::Expecting(expect, got))
         }
     }
 
@@ -298,8 +304,8 @@ where
 
             DeclKind::Type(tp)
         } else {
-            let params = self.end_by(Self::pattern_atom, Some(&TokenKind::Equal))?;
-            self.ignore();
+            let params = self.pattern_atoms()?;
+            self.expect(&TokenKind::Equal)?;
             let body = self.expr()?;
 
             let mut value = body;
@@ -339,16 +345,20 @@ where
         } else {
             let value = self.expr()?;
 
-            let pat = if self.consume(&TokenKind::Arrow)? {
-                let pat = self.pattern()?;
-                self.expect(&TokenKind::Newline)?;
-                pat
-            } else if self.consume(&TokenKind::Newline)? {
-                Pattern {
-                    kind: PatternKind::Ignore,
+            let pat = match self.peek()?.map(|t| &t.kind) {
+                Some(TokenKind::Arrow) => {
+                    self.ignore();
+                    let pat = self.pattern()?;
+                    self.expect(&TokenKind::Newline)?;
+                    pat
                 }
-            } else {
-                return Ok(value);
+                Some(TokenKind::Newline) => {
+                    self.ignore();
+                    Pattern {
+                        kind: PatternKind::Ignore,
+                    }
+                }
+                _ => return Ok(value),
             };
 
             let next = self.block()?;
@@ -380,14 +390,10 @@ where
     fn factor(&mut self) -> Result<Expr> {
         let mut expr = self.atom()?;
 
-        loop {
-            if let Some(Token { kind, .. }) = self.peek()? {
-                match kind {
-                    TokenKind::Id(_) | TokenKind::LeftParen | TokenKind::Indent => {}
-                    _ => break,
-                }
-            }
-
+        while self.satisfy(|k| match k {
+            TokenKind::Id(_) | TokenKind::LeftParen | TokenKind::Indent => true,
+            _ => false,
+        })? {
             let val = self.atom()?;
             expr = Expr {
                 kind: ExprKind::Apply(Box::new(expr), Box::new(val)),
@@ -398,18 +404,14 @@ where
     }
 
     fn atom(&mut self) -> Result<Expr> {
-        let expr = match self
-            .peek()?
-            .ok_or_else(|| Error::Expecting("value".to_string(), None))?
-            .kind
-        {
-            TokenKind::Id(_) => {
+        let expr = match self.peek()?.map(|t| &t.kind) {
+            Some(TokenKind::Id(_)) => {
                 let bind = self.bind()?;
                 Expr {
                     kind: ExprKind::Bind(bind),
                 }
             }
-            TokenKind::LeftParen => {
+            Some(TokenKind::LeftParen) => {
                 self.ignore();
                 let expr = if self.matches(&TokenKind::RightParen)? {
                     Expr {
@@ -421,7 +423,7 @@ where
                 self.expect(&TokenKind::RightParen)?;
                 expr
             }
-            TokenKind::Indent => {
+            Some(TokenKind::Indent) => {
                 self.ignore();
                 let expr = self.block()?;
                 self.expect(&TokenKind::Dedent)?;
@@ -443,26 +445,14 @@ where
     }
 
     fn pattern(&mut self) -> Result<Pattern> {
-        let is_type = match self.peek()?.map(|t| &t.kind) {
-            Some(TokenKind::Id(name)) => is_type(name),
+        let is_type = self.satisfy(|k| match k {
+            TokenKind::Id(name) => is_type(name),
             _ => false,
-        };
+        })?;
 
         if is_type {
             let tp = self.id()?;
-
-            let mut fields = Vec::new();
-            loop {
-                if let Some(Token { kind, .. }) = self.peek()? {
-                    match kind {
-                        TokenKind::Id(_) | TokenKind::LeftParen => {}
-                        _ => break,
-                    }
-                }
-
-                let pat = self.pattern_atom()?;
-                fields.push(pat);
-            }
+            let fields = self.pattern_atoms()?;
 
             let kind = PatternKind::Struct(tp, fields);
             Ok(Pattern { kind })
@@ -471,25 +461,46 @@ where
         }
     }
 
-    fn pattern_atom(&mut self) -> Result<Pattern> {
-        if self.consume(&TokenKind::LeftParen)? {
-            let pat = self.pattern()?;
-            self.expect(&TokenKind::RightParen)?;
-            Ok(pat)
-        } else {
-            let name = self.id()?;
-            let kind = if name == "_" {
-                PatternKind::Ignore
-            } else {
-                PatternKind::Bind(name)
-            };
-            Ok(Pattern { kind })
+    fn pattern_atoms(&mut self) -> Result<Vec<Pattern>> {
+        let mut pats = Vec::new();
+        while self.satisfy(|k| match k {
+            TokenKind::Id(_) | TokenKind::LeftParen => true,
+            _ => false,
+        })? {
+            let pat = self.pattern_atom()?;
+            pats.push(pat);
         }
+        Ok(pats)
+    }
+
+    fn pattern_atom(&mut self) -> Result<Pattern> {
+        let pat = match self.peek()?.map(|t| &t.kind) {
+            Some(TokenKind::Id(_)) => {
+                let name = self.id()?;
+                let kind = if name == "_" {
+                    PatternKind::Ignore
+                } else {
+                    PatternKind::Bind(name)
+                };
+                Pattern { kind }
+            }
+            Some(TokenKind::LeftParen) => {
+                self.ignore();
+                let pat = self.pattern()?;
+                self.expect(&TokenKind::RightParen)?;
+                pat
+            }
+            _ => {
+                let token = self.next()?;
+                return Err(Error::Expecting("pattern".to_string(), token));
+            }
+        };
+        Ok(pat)
     }
 
     fn bind(&mut self) -> Result<Bind> {
-        self.sep_by(Self::id, &TokenKind::Colon)
-            .map(|names| Bind { names })
+        let names = self.sep_by(Self::id, &TokenKind::Colon)?;
+        Ok(Bind { names })
     }
 
     fn ids(&mut self) -> Result<Vec<String>> {
