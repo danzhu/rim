@@ -7,6 +7,7 @@ pub enum Error {
     UnknownChar(Pos, char),
     PartialDedent(Pos),
     Expecting(String, Option<Token>),
+    InvalidPattern(Bind),
 }
 
 pub type Result<T> = result::Result<T, Error>;
@@ -306,7 +307,7 @@ where
 
             DeclKind::Type(tp)
         } else {
-            let params = self.pattern_atoms()?;
+            let params = self.patterns()?;
             self.expect(&TokenKind::Equal)?;
             let body = self.expr()?;
 
@@ -333,7 +334,7 @@ where
 
     fn block(&mut self) -> Result<Expr> {
         let kind = if self.consume(&TokenKind::Let)? {
-            let pat = self.pattern()?;
+            let pat = self.pattern(true)?;
             self.expect(&TokenKind::Equal)?;
             let value = self.expr()?;
             self.expect(&TokenKind::Newline)?;
@@ -350,7 +351,7 @@ where
             let pat = match self.peek()?.map(|t| &t.kind) {
                 Some(TokenKind::Arrow) => {
                     self.ignore();
-                    let pat = self.pattern()?;
+                    let pat = self.pattern(true)?;
                     self.expect(&TokenKind::Newline)?;
                     pat
                 }
@@ -419,6 +420,7 @@ where
             Some(TokenKind::Which) => {
                 self.ignore();
                 let expr = self.expr()?;
+                self.consume(&TokenKind::Newline)?;
                 self.expect(&TokenKind::Of)?;
                 self.expect(&TokenKind::Indent)?;
                 let arms = self.sep_by(Self::arm, &TokenKind::Newline)?;
@@ -436,60 +438,52 @@ where
     }
 
     fn arm(&mut self) -> Result<Arm> {
-        let pattern = self.pattern()?;
+        let pattern = self.pattern(true)?;
         self.expect(&TokenKind::Bar)?;
         let value = self.expr()?;
         Ok(Arm { pattern, value })
     }
 
-    fn pattern(&mut self) -> Result<Pattern> {
-        let is_type = self.satisfy(|k| match k {
-            TokenKind::Id(name) => is_type(name),
-            _ => false,
-        })?;
-
-        if is_type {
-            let tp = self.id()?;
-            let fields = self.pattern_atoms()?;
-
-            let kind = PatternKind::Struct(tp, fields);
-            Ok(Pattern { kind })
-        } else {
-            self.pattern_atom()
-        }
-    }
-
-    fn pattern_atoms(&mut self) -> Result<Vec<Pattern>> {
+    fn patterns(&mut self) -> Result<Vec<Pattern>> {
         let mut pats = Vec::new();
         while self.satisfy(|k| match k {
             TokenKind::Id(_) | TokenKind::LeftParen => true,
             _ => false,
         })? {
-            let pat = self.pattern_atom()?;
+            let pat = self.pattern(false)?;
             pats.push(pat);
         }
         Ok(pats)
     }
 
-    fn pattern_atom(&mut self) -> Result<Pattern> {
+    fn pattern(&mut self, multi: bool) -> Result<Pattern> {
         let pat = match self.peek()?.map(|t| &t.kind) {
             Some(TokenKind::Id(_)) => {
-                let name = self.id()?;
-                let kind = if name == "_" {
-                    PatternKind::Ignore
+                let bind = self.bind()?;
+                let kind = if is_type(bind.names.last().expect("empty bind")) {
+                    let fields = if multi { self.patterns()? } else { Vec::new() };
+                    PatternKind::Struct(bind, fields)
+                } else if bind.names.len() == 1 {
+                    let mut names = bind.names;
+                    let name = names.pop().expect("empty bind");
+                    if name != "_" {
+                        PatternKind::Bind(name)
+                    } else {
+                        PatternKind::Ignore
+                    }
                 } else {
-                    PatternKind::Bind(name)
+                    return Err(Error::InvalidPattern(bind));
                 };
                 Pattern { kind }
             }
             Some(TokenKind::LeftParen) => {
                 self.ignore();
-                let pat = self.pattern()?;
+                let pat = self.pattern(true)?;
                 self.expect(&TokenKind::RightParen)?;
                 pat
             }
             _ => {
-                let token = self.next()?;
+                let token = self.next().expect("peek");
                 return Err(Error::Expecting("pattern".to_string(), token));
             }
         };

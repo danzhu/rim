@@ -54,11 +54,11 @@ impl fmt::Debug for Scope {
 
 impl Value for Scope {
     fn mark_rec(&self, gc: &mut Gc) {
+        if let Some(parent) = self.parent {
+            gc.mark(parent);
+        }
         for &r in self.binds.values() {
             gc.mark(r);
-            if let Some(parent) = self.parent {
-                gc.mark(parent);
-            }
         }
     }
 }

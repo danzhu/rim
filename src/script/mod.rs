@@ -164,13 +164,18 @@ impl Runtime {
     fn pattern(&self, pat: &ast::Pattern, val: Ref, env: Ref, scope: &mut Scope) -> Result<bool> {
         match &pat.kind {
             ast::PatternKind::Bind(name) => scope.insert(name.clone(), val),
-            ast::PatternKind::Struct(tp, fields) => {
+            ast::PatternKind::Struct(var, fields) => {
+                let var = self.get_bind(var, env)?;
+                let tp = self
+                    .mem
+                    .get::<Struct>(var)
+                    .ok_or_else(|| Error::NonStruct(var))?;
                 let val = self
                     .mem
                     .get::<Struct>(val)
                     .ok_or_else(|| Error::NonStruct(val))?;
 
-                if self.mem.get::<Type>(val.tp).expect("tp not type").name != *tp {
+                if val.tp != tp.tp {
                     return Ok(false);
                 }
                 for (pat, &field) in fields.iter().zip(&val.fields) {

@@ -10,6 +10,8 @@ def head lst = which lst of
     Cons a _ | K a
     _        | E ()
 
+def assert_empty Null = ()
+
 def unwrap (K value) = value
 
 def id x = x
@@ -20,6 +22,7 @@ def main =
         rim:print v
 
     let lst = Cons test Null
+    let _ = assert_empty Null
     unwrap (head lst)
     id
         rim:print lst
