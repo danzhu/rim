@@ -5,6 +5,8 @@ use std::{iter, result};
 #[derive(Clone, Debug)]
 pub enum Error {
     UnknownChar(Pos, char),
+    UnterminatedString(Pos),
+    UnknownEscape(Pos, char),
     PartialDedent(Pos),
     Expecting(String, Option<Token>),
     InvalidPattern(Bind),
@@ -47,6 +49,7 @@ enum TokenKind {
     LeftParen,
     RightParen,
     Id(String),
+    String(String),
 }
 
 struct Lexer<Iter>
@@ -162,6 +165,28 @@ where
                 ('-', Some('>')) => {
                     self.ignore();
                     TokenKind::Arrow
+                }
+                ('"', _) => {
+                    let mut s = String::new();
+                    loop {
+                        s.push(match match self.read() {
+                            Some(c) => c,
+                            None => return Some(Err(Error::UnterminatedString(pos))),
+                        } {
+                            '"' => break,
+                            '\\' => match match self.read() {
+                                Some(c) => c,
+                                None => return Some(Err(Error::UnterminatedString(pos))),
+                            } {
+                                'n' => '\n',
+                                'r' => '\r',
+                                't' => '\t',
+                                c => return Some(Err(Error::UnknownEscape(pos, c))),
+                            },
+                            c => c,
+                        })
+                    }
+                    TokenKind::String(s)
                 }
                 ('\n', _) => {
                     let mut ind = 0;
@@ -379,7 +404,11 @@ where
         let mut expr = self.atom()?;
 
         while self.satisfy(|k| match k {
-            TokenKind::Id(_) | TokenKind::LeftParen | TokenKind::Indent | TokenKind::Which => true,
+            TokenKind::String(_)
+            | TokenKind::Id(_)
+            | TokenKind::LeftParen
+            | TokenKind::Indent
+            | TokenKind::Which => true,
             _ => false,
         })? {
             let val = self.atom()?;
@@ -393,6 +422,15 @@ where
 
     fn atom(&mut self) -> Result<Expr> {
         let expr = match self.peek()?.map(|t| &t.kind) {
+            Some(TokenKind::String(_)) => {
+                let s = match self.next().expect("peek").expect("peek").kind {
+                    TokenKind::String(s) => s,
+                    _ => unreachable!(),
+                };
+                Expr {
+                    kind: ExprKind::String(s),
+                }
+            }
             Some(TokenKind::Id(_)) => {
                 let bind = self.bind()?;
                 Expr {

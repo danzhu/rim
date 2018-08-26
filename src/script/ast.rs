@@ -66,6 +66,7 @@ impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self.kind {
             ExprKind::Unit => write!(f, "()"),
+            ExprKind::String(s) => write!(f, "{:?}", s),
             ExprKind::Bind(bind) => write!(f, "{}", bind),
             ExprKind::Apply(func, arg) => write!(f, "({} {})", func, arg),
             ExprKind::Func(param, body) => write!(f, "/{} {}", param, body),
@@ -84,6 +85,7 @@ impl fmt::Display for Expr {
 #[derive(Clone, Debug)]
 pub enum ExprKind {
     Unit,
+    String(String),
     Bind(Bind),
     Apply(Box<Expr>, Box<Expr>),
     Func(Pattern, Box<Expr>),

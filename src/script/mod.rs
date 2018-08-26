@@ -131,6 +131,7 @@ impl Runtime {
     pub fn eval(&mut self, expr: &ast::Expr, env: Ref) -> Result<Ref> {
         match &expr.kind {
             ast::ExprKind::Unit => Ok(self.mem.alloc(())),
+            ast::ExprKind::String(s) => Ok(self.mem.alloc(s.clone())),
             ast::ExprKind::Bind(bind) => self.get_bind(bind, env),
             ast::ExprKind::Apply(func, arg) => {
                 let func = self.eval(&func, env)?;
