@@ -37,7 +37,8 @@ enum TokenKind {
     Dedent,
     Def,
     Let,
-    Match,
+    Which,
+    Of,
     Colon,
     Equal,
     Arrow,
@@ -144,7 +145,8 @@ where
             match s.as_ref() {
                 "def" => TokenKind::Def,
                 "let" => TokenKind::Let,
-                "match" => TokenKind::Match,
+                "which" => TokenKind::Which,
+                "of" => TokenKind::Of,
                 _ => TokenKind::Id(s),
             }
         } else {
@@ -373,25 +375,10 @@ where
     }
 
     fn expr(&mut self) -> Result<Expr> {
-        let mut expr = self.factor()?;
-
-        if self.consume(&TokenKind::Match)? {
-            self.expect(&TokenKind::Indent)?;
-            let arms = self.sep_by(Self::arm, &TokenKind::Newline)?;
-            self.expect(&TokenKind::Dedent)?;
-            expr = Expr {
-                kind: ExprKind::Match(Box::new(expr), arms),
-            };
-        }
-
-        Ok(expr)
-    }
-
-    fn factor(&mut self) -> Result<Expr> {
         let mut expr = self.atom()?;
 
         while self.satisfy(|k| match k {
-            TokenKind::Id(_) | TokenKind::LeftParen | TokenKind::Indent => true,
+            TokenKind::Id(_) | TokenKind::LeftParen | TokenKind::Indent | TokenKind::Which => true,
             _ => false,
         })? {
             let val = self.atom()?;
@@ -413,21 +400,32 @@ where
             }
             Some(TokenKind::LeftParen) => {
                 self.ignore();
-                let expr = if self.matches(&TokenKind::RightParen)? {
+                if self.consume(&TokenKind::RightParen)? {
                     Expr {
                         kind: ExprKind::Unit,
                     }
                 } else {
-                    self.expr()?
-                };
-                self.expect(&TokenKind::RightParen)?;
-                expr
+                    let expr = self.expr()?;
+                    self.expect(&TokenKind::RightParen)?;
+                    expr
+                }
             }
             Some(TokenKind::Indent) => {
                 self.ignore();
                 let expr = self.block()?;
                 self.expect(&TokenKind::Dedent)?;
                 expr
+            }
+            Some(TokenKind::Which) => {
+                self.ignore();
+                let expr = self.expr()?;
+                self.expect(&TokenKind::Of)?;
+                self.expect(&TokenKind::Indent)?;
+                let arms = self.sep_by(Self::arm, &TokenKind::Newline)?;
+                self.expect(&TokenKind::Dedent)?;
+                Expr {
+                    kind: ExprKind::Match(Box::new(expr), arms),
+                }
             }
             _ => {
                 let token = self.next().expect("peek");

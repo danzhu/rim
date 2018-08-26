@@ -6,7 +6,7 @@ def Res =
     K value
     E error
 
-def head lst = lst match
+def head lst = which lst of
     Cons a _ | K a
     _        | E ()
 
