@@ -133,22 +133,22 @@ impl Runtime {
             ast::ExprKind::Unit => Ok(self.mem.alloc(())),
             ast::ExprKind::String(s) => Ok(self.mem.alloc(s.clone())),
             ast::ExprKind::Bind(bind) => self.get_bind(bind, env),
-            ast::ExprKind::Apply(func, arg) => {
+            ast::ExprKind::Apply { func, arg } => {
                 let func = self.eval(&func, env)?;
                 let arg = self.eval(&arg, env)?;
                 self.call(func, arg)
             }
-            ast::ExprKind::Func(param, body) => {
+            ast::ExprKind::Func { param, body } => {
                 let param = param.clone();
                 let body = (**body).clone();
                 Ok(self.mem.alloc(Func { param, body, env }))
             }
-            ast::ExprKind::Seq(expr, next) => {
-                let task = self.eval(&expr, env)?;
+            ast::ExprKind::Seq { task, next } => {
+                let task = self.eval(&task, env)?;
                 let next = self.eval(&next, env)?;
                 Ok(self.mem.alloc(Seq { task, next }))
             }
-            ast::ExprKind::Match(expr, arms) => {
+            ast::ExprKind::Match { expr, arms } => {
                 let val = self.eval(&expr, env)?;
                 for arm in arms.iter() {
                     let mut scope = Scope::from(env);
@@ -165,12 +165,12 @@ impl Runtime {
     fn pattern(&self, pat: &ast::Pattern, val: Ref, env: Ref, scope: &mut Scope) -> Result<bool> {
         match &pat.kind {
             ast::PatternKind::Bind(name) => scope.insert(name.clone(), val),
-            ast::PatternKind::Struct(var, fields) => {
-                let var = self.get_bind(var, env)?;
+            ast::PatternKind::Struct { tp, fields } => {
+                let tp = self.get_bind(tp, env)?;
                 let tp = self
                     .mem
-                    .get::<Struct>(var)
-                    .ok_or_else(|| Error::NonStruct(var))?;
+                    .get::<Struct>(tp)
+                    .ok_or_else(|| Error::NonStruct(tp))?;
                 let val = self
                     .mem
                     .get::<Struct>(val)

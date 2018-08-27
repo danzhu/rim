@@ -340,12 +340,14 @@ where
         } else {
             let params = self.patterns()?;
             self.expect(&TokenKind::Equal)?;
-            let body = self.expr()?;
+            let mut value = self.expr()?;
 
-            let mut value = body;
             for param in params.into_iter().rev() {
                 value = Expr {
-                    kind: ExprKind::Func(param, Box::new(value)),
+                    kind: ExprKind::Func {
+                        param,
+                        body: Box::new(value),
+                    },
                 }
             }
 
@@ -373,9 +375,15 @@ where
             let next = self.block()?;
 
             let func = Expr {
-                kind: ExprKind::Func(pat, Box::new(next)),
+                kind: ExprKind::Func {
+                    param: pat,
+                    body: Box::new(next),
+                },
             };
-            ExprKind::Apply(Box::new(func), Box::new(value))
+            ExprKind::Apply {
+                func: Box::new(func),
+                arg: Box::new(value),
+            }
         } else {
             let value = self.expr()?;
 
@@ -398,9 +406,15 @@ where
             let next = self.block()?;
 
             let func = Expr {
-                kind: ExprKind::Func(pat, Box::new(next)),
+                kind: ExprKind::Func {
+                    param: pat,
+                    body: Box::new(next),
+                },
             };
-            ExprKind::Seq(Box::new(value), Box::new(func))
+            ExprKind::Seq {
+                task: Box::new(value),
+                next: Box::new(func),
+            }
         };
 
         Ok(Expr { kind })
@@ -409,9 +423,12 @@ where
     fn expr(&mut self) -> Result<Expr> {
         let mut expr = self.atom()?.ok_or_else(|| self.err("value"))?;
 
-        while let Some(val) = self.atom()? {
+        while let Some(arg) = self.atom()? {
             expr = Expr {
-                kind: ExprKind::Apply(Box::new(expr), Box::new(val)),
+                kind: ExprKind::Apply {
+                    func: Box::new(expr),
+                    arg: Box::new(arg),
+                },
             };
         }
 
@@ -462,7 +479,10 @@ where
                 let arms = self.sep_by(Self::arm, &TokenKind::Newline)?;
                 self.expect(&TokenKind::Dedent)?;
                 Expr {
-                    kind: ExprKind::Match(Box::new(expr), arms),
+                    kind: ExprKind::Match {
+                        expr: Box::new(expr),
+                        arms,
+                    },
                 }
             }
             _ => return Ok(None),
@@ -495,7 +515,7 @@ where
                 let bind = self.bind()?;
                 let kind = if is_type(bind.names.last().expect("empty bind")) {
                     let fields = if multi { self.patterns()? } else { Vec::new() };
-                    PatternKind::Struct(bind, fields)
+                    PatternKind::Struct { tp: bind, fields }
                 } else if bind.names.len() == 1 {
                     let mut names = bind.names;
                     let name = names.pop().expect("empty bind");
