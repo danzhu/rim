@@ -1,5 +1,5 @@
 use super::ast;
-use super::rt::{Gc, Memory, Ref, Value};
+use super::mem::{Gc, Memory, Ref, Value};
 use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;

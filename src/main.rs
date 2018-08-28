@@ -5,18 +5,18 @@ mod lib;
 // mod ncurses;
 mod script;
 
-use script::rt::{Gc, Ref, Value};
+use script::mem::{Gc, Ref, Value};
 use script::tp::{Native, Scope, Seq};
 use std::result;
 
 #[derive(Debug)]
 pub enum Error {
-    Script(script::Error),
+    Script(script::rt::Error),
     NotTask(Ref),
 }
 
-impl From<script::Error> for Error {
-    fn from(err: script::Error) -> Self {
+impl From<script::rt::Error> for Error {
+    fn from(err: script::rt::Error) -> Self {
         Error::Script(err)
     }
 }
@@ -39,13 +39,13 @@ impl Value for Task {
 }
 
 pub struct Rim {
-    rt: script::Runtime,
+    rt: script::rt::Runtime,
     root: Ref,
 }
 
 impl Rim {
     fn new() -> Self {
-        let mut rt = script::Runtime::new();
+        let mut rt = script::rt::Runtime::new();
 
         let root = {
             let mut mem = rt.memory_mut();
