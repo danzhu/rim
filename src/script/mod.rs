@@ -148,6 +148,45 @@ impl Runtime {
                 let next = self.eval(&next, env)?;
                 Ok(self.mem.alloc(Seq { task, next }))
             }
+            ast::ExprKind::Map { expr, map } => {
+                let expr = self.eval(expr, env)?;
+                let map = self.eval(map, env)?;
+
+                let param = ast::Pattern {
+                    kind: ast::PatternKind::Bind("a".to_string()),
+                };
+
+                let body = ast::Expr {
+                    kind: ast::ExprKind::Apply {
+                        func: Box::new(ast::Expr {
+                            kind: ast::ExprKind::Bind(ast::Bind {
+                                names: vec!["m".to_string()],
+                            }),
+                        }),
+                        arg: Box::new(ast::Expr {
+                            kind: ast::ExprKind::Apply {
+                                func: Box::new(ast::Expr {
+                                    kind: ast::ExprKind::Bind(ast::Bind {
+                                        names: vec!["f".to_string()],
+                                    }),
+                                }),
+                                arg: Box::new(ast::Expr {
+                                    kind: ast::ExprKind::Bind(ast::Bind {
+                                        names: vec!["a".to_string()],
+                                    }),
+                                }),
+                            },
+                        }),
+                    },
+                };
+
+                let mut scope = Scope::new();
+                scope.insert("f", expr);
+                scope.insert("m", map);
+                let env = self.mem.alloc(scope);
+
+                Ok(self.mem.alloc(Func { param, body, env }))
+            }
             ast::ExprKind::Match { expr, arms } => {
                 let val = self.eval(&expr, env)?;
                 for arm in arms.iter() {

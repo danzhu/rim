@@ -42,6 +42,7 @@ enum TokenKind {
     Let,
     Which,
     Of,
+    Dot,
     Colon,
     Equal,
     Arrow,
@@ -157,6 +158,7 @@ where
             self.ignore();
             let next = self.peek();
             match (ch, next) {
+                ('.', _) => TokenKind::Dot,
                 (':', _) => TokenKind::Colon,
                 ('=', _) => TokenKind::Equal,
                 ('|', _) => TokenKind::Bar,
@@ -421,6 +423,21 @@ where
     }
 
     fn expr(&mut self) -> Result<Expr> {
+        let mut expr = self.factor()?;
+
+        while self.consume(&TokenKind::Dot)? {
+            let map = self.factor()?;
+            expr = Expr {
+                kind: ExprKind::Map {
+                    expr: Box::new(expr),
+                    map: Box::new(map),
+                },
+            }
+        }
+        Ok(expr)
+    }
+
+    fn factor(&mut self) -> Result<Expr> {
         let mut expr = self.atom()?.ok_or_else(|| self.err("value"))?;
 
         while let Some(arg) = self.atom()? {

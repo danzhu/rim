@@ -71,6 +71,7 @@ impl fmt::Display for Expr {
             ExprKind::Apply { func, arg } => write!(f, "({} {})", func, arg),
             ExprKind::Func { param, body } => write!(f, "/{} {}", param, body),
             ExprKind::Seq { task, next } => write!(f, "({} > {})", task, next),
+            ExprKind::Map { expr, map } => write!(f, "({} . {})", expr, map),
             ExprKind::Match { expr, arms } => {
                 write!(f, "({}", expr)?;
                 for arm in arms {
@@ -90,6 +91,7 @@ pub enum ExprKind {
     Apply { func: Box<Expr>, arg: Box<Expr> },
     Func { param: Pattern, body: Box<Expr> },
     Seq { task: Box<Expr>, next: Box<Expr> },
+    Map { expr: Box<Expr>, map: Box<Expr> },
     Match { expr: Box<Expr>, arms: Vec<Arm> },
 }
 
