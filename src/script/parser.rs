@@ -1,13 +1,19 @@
 use super::ast::{Arm, Bind, Decl, DeclKind, Expr, ExprKind, Pattern, PatternKind, Type, Variant};
-use lib::Pos;
+use lib::{Pos, Span};
 use std::{iter, result};
 
 #[derive(Clone, Debug)]
-pub enum Error {
-    UnknownChar(Pos, char),
-    UnterminatedString(Pos),
-    UnknownEscape(Pos, char),
-    PartialDedent(Pos),
+pub struct Error {
+    pub span: Option<Span>,
+    pub kind: ErrorKind,
+}
+
+#[derive(Clone, Debug)]
+pub enum ErrorKind {
+    UnknownChar(char),
+    UnterminatedString,
+    UnknownEscape(char),
+    PartialDedent,
     Expecting(String, Option<Token>),
     InvalidPattern(Bind),
 }
@@ -27,13 +33,13 @@ pub fn parse(s: &str) -> Result<Vec<Decl>> {
     Ok(decls)
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Token {
-    pos: Pos,
+    span: Span,
     kind: TokenKind,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum TokenKind {
     Newline,
     Indent,
@@ -59,6 +65,7 @@ where
 {
     source: iter::Peekable<Iter>,
     pos: Pos,
+    start: Pos,
     indents: Vec<usize>,
     pending_dedents: usize,
     pending_eol: bool,
@@ -72,6 +79,7 @@ where
         Lexer {
             source: source.peekable(),
             pos: Pos::new(),
+            start: Pos::new(),
             indents: Vec::new(),
             pending_dedents: 0,
             pending_eol: false,
@@ -111,6 +119,35 @@ where
         }
         s
     }
+
+    fn start(&mut self) {
+        self.start = self.pos;
+    }
+
+    fn span(&self) -> Span {
+        Span {
+            start: self.start,
+            end: self.pos,
+        }
+    }
+
+    fn ok(&self, kind: TokenKind) -> Option<Result<Token>> {
+        Some(Ok(Token {
+            span: self.span(),
+            kind,
+        }))
+    }
+
+    fn err(&self, kind: ErrorKind) -> Option<Result<Token>> {
+        Some(Err(Error {
+            span: Some(self.span()),
+            kind,
+        }))
+    }
+
+    fn end(&self) -> Option<Result<Token>> {
+        None
+    }
 }
 
 impl<Iter> Iterator for Lexer<Iter>
@@ -120,17 +157,16 @@ where
     type Item = Result<Token>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let pos = self.pos;
-        let token = move |kind| Some(Ok(Token { pos, kind }));
+        self.start();
 
         if self.pending_eol {
             self.pending_eol = false;
-            return token(TokenKind::Newline);
+            return self.ok(TokenKind::Newline);
         }
         if self.pending_dedents > 0 {
             self.pending_dedents -= 1;
             self.pending_eol = self.pending_dedents == 0;
-            return token(TokenKind::Dedent);
+            return self.ok(TokenKind::Dedent);
         }
 
         let ch = match self.peek() {
@@ -139,7 +175,7 @@ where
                 return if self.pending_dedents > 0 {
                     self.next()
                 } else {
-                    None
+                    self.end()
                 };
             }
             Some(ch) => ch,
@@ -173,17 +209,17 @@ where
                     loop {
                         s.push(match match self.read() {
                             Some(c) => c,
-                            None => return Some(Err(Error::UnterminatedString(pos))),
+                            None => return self.err(ErrorKind::UnterminatedString),
                         } {
                             '"' => break,
                             '\\' => match match self.read() {
                                 Some(c) => c,
-                                None => return Some(Err(Error::UnterminatedString(pos))),
+                                None => return self.err(ErrorKind::UnterminatedString),
                             } {
                                 'n' => '\n',
                                 'r' => '\r',
                                 't' => '\t',
-                                c => return Some(Err(Error::UnknownEscape(pos, c))),
+                                c => return self.err(ErrorKind::UnknownEscape(c)),
                             },
                             c => c,
                         })
@@ -208,7 +244,7 @@ where
                             self.pending_dedents += 1;
                         }
                         if ind != self.indent() {
-                            return Some(Err(Error::PartialDedent(pos)));
+                            return self.err(ErrorKind::PartialDedent);
                         }
                         return self.next();
                     } else if ind > last {
@@ -219,11 +255,11 @@ where
                     }
                 }
                 _ if ch.is_whitespace() => return self.next(),
-                _ => return Some(Err(Error::UnknownChar(pos, ch))),
+                _ => return self.err(ErrorKind::UnknownChar(ch)),
             }
         };
 
-        token(kind)
+        self.ok(kind)
     }
 }
 
@@ -288,7 +324,9 @@ where
         Str: Into<String>,
     {
         let got = self.next().expect("peek");
-        Error::Expecting(exp.into(), got)
+        let span = got.as_ref().map(|t| t.span);
+        let kind = ErrorKind::Expecting(exp.into(), got);
+        Error { span, kind }
     }
 
     fn expect(&mut self, kind: &TokenKind) -> Result<()> {
@@ -542,7 +580,11 @@ where
                         PatternKind::Ignore
                     }
                 } else {
-                    return Err(Error::InvalidPattern(bind));
+                    // TODO: use actual span
+                    return Err(Error {
+                        span: None,
+                        kind: ErrorKind::InvalidPattern(bind),
+                    });
                 };
                 Pattern { kind }
             }
@@ -577,7 +619,10 @@ where
                 kind: TokenKind::Id(id),
                 ..
             }) => Ok(id),
-            token => Err(Error::Expecting("Id".to_string(), token)),
+            token => Err(Error {
+                span: token.as_ref().map(|t| t.span),
+                kind: ErrorKind::Expecting("Id".to_string(), token),
+            }),
         }
     }
 }
