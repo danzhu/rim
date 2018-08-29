@@ -48,6 +48,7 @@ enum TokenKind {
     Let,
     Which,
     Of,
+    Quote,
     Dot,
     Colon,
     Equal,
@@ -194,6 +195,7 @@ where
             self.ignore();
             let next = self.peek();
             match (ch, next) {
+                ('\'', _) => TokenKind::Quote,
                 ('.', _) => TokenKind::Dot,
                 (':', _) => TokenKind::Colon,
                 ('=', _) => TokenKind::Equal,
@@ -461,6 +463,21 @@ where
     }
 
     fn expr(&mut self) -> Result<Expr> {
+        let mut expr = self.term()?;
+
+        while self.consume(&TokenKind::Quote)? {
+            let func = self.term()?;
+            expr = Expr {
+                kind: ExprKind::Apply {
+                    func: Box::new(func),
+                    arg: Box::new(expr),
+                },
+            }
+        }
+        Ok(expr)
+    }
+
+    fn term(&mut self) -> Result<Expr> {
         let mut expr = self.factor()?;
 
         while self.consume(&TokenKind::Dot)? {
@@ -515,6 +532,7 @@ where
                     }
                 } else {
                     let expr = self.expr()?;
+                    self.consume(&TokenKind::Newline)?;
                     self.expect(&TokenKind::RightParen)?;
                     expr
                 }

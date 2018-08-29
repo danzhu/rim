@@ -25,6 +25,7 @@ def main =
 
     let lst = Cons test Null
     let _ = assert_empty Null
-    (head . unwrap) lst
-    id
-        rim:print lst
+    lst ' head . unwrap
+    id (
+        rim:print
+    ) lst
